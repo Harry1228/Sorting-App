@@ -1,0 +1,6 @@
+PIN,Office_Name,Office_Type,District,Division,NSH_Routing,PH_Routing
+452001,Indore GPO,HO,Indore,ID Division,Indore NSH Set-1,Indore PH Set-1
+454001,Dhar MDG,SO,Dhar,ID Division,Ujjain NSH Set-2,Indore PH Set-2
+450001,Khandwa HO,HO,Khandwa,ID Division,Bhopal NSH,Khandwa PH
+```[span_3](start_span)[span_3](end_span)
+*(You can add as many rows or additional `.csv` files into this folder as you need.)*
