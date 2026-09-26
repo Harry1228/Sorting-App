@@ -33,6 +33,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.io.BufferedReader
+import java.io.InputStream
 import java.io.InputStreamReader
 
 data class CsvTable(
@@ -52,52 +53,74 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// Convert "DHAR DEWAS" -> "Dhar Dewas"
+// Formats "DHAR DEWAS" to "Dhar Dewas"
 fun formatTitleCase(text: String): String {
     return text.split(" ")
         .filter { it.isNotBlank() }
         .joinToString(" ") { word -> word.lowercase().replaceFirstChar { it.uppercase() } }
 }
 
-// Parse lines into clean table data
-fun parseCsvToTable(category: String, regionName: String, lines: List<String>): CsvTable? {
-    val cleanLines = lines.map { it.trim() }.filter { it.isNotEmpty() }
-    if (cleanLines.isEmpty()) return null
+// Parses raw CSV stream handling quotes and commas properly
+fun parseCsvStream(inputStream: InputStream, category: String, regionName: String): CsvTable? {
+    try {
+        val reader = BufferedReader(InputStreamReader(inputStream, Charsets.UTF_8))
+        val rawLines = reader.readLines()
+        val cleanLines = rawLines.map { it.trim() }.filter { it.isNotEmpty() }
+        if (cleanLines.isEmpty()) return null
 
-    val regex = ",(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)".toRegex()
-    val headers = cleanLines[0].split(regex).map { it.trim().removeSurrounding("\"").uppercase() }
-    val rows = cleanLines.drop(1).map { line ->
-        line.split(regex).map { it.trim().removeSurrounding("\"") }
+        fun splitLine(line: String): List<String> {
+            val tokens = mutableListOf<String>()
+            val sb = StringBuilder()
+            var inQuotes = false
+            for (ch in line) {
+                when {
+                    ch == '\"' -> inQuotes = !inQuotes
+                    ch == ',' && !inQuotes -> {
+                        tokens.add(sb.toString().trim().removeSurrounding("\""))
+                        sb.clear()
+                    }
+                    else -> sb.append(ch)
+                }
+            }
+            tokens.add(sb.toString().trim().removeSurrounding("\""))
+            return tokens
+        }
+
+        val headers = splitLine(cleanLines[0]).map { it.uppercase() }
+        val rows = cleanLines.drop(1).map { splitLine(it) }
+        return CsvTable(category, regionName, headers, rows)
+    } catch (e: Exception) {
+        e.printStackTrace()
+        return null
     }
-    return CsvTable(category, regionName, headers, rows)
 }
 
-// Loads all CSVs from assets
+// Loads all CSV files from the app's assets folder
 fun loadBundledTables(context: Context): List<CsvTable> {
     val tables = mutableListOf<CsvTable>()
     val assetManager = context.assets
 
     try {
-        val files = assetManager.list("")?.filter { it.trim().endsWith(".csv", ignoreCase = true) } ?: emptyList()
+        val fileList = assetManager.list("") ?: emptyArray()
+        val csvFiles = fileList.filter { it.trim().endsWith(".csv", ignoreCase = true) }
 
-        for (fileName in files) {
-            val cleanName = fileName.trim()
-            val lower = cleanName.lowercase()
-
+        for (fileName in csvFiles) {
+            val lower = fileName.lowercase()
             val category = when {
                 lower.startsWith("ph") || lower.contains("- ph") -> "PH"
                 else -> "NSH"
             }
 
-            val baseName = cleanName
+            // Extract region name from file name (e.g., "NSH - AIR .csv" -> "Air")
+            val baseName = fileName.trim()
                 .replace(Regex("(?i)^(nsh|ph)\\s*[-_]?\\s*"), "")
                 .replace(Regex("(?i)\\.csv$"), "")
                 .trim()
             val regionName = if (baseName.isNotBlank()) formatTitleCase(baseName) else "General"
 
-            assetManager.open(cleanName).bufferedReader().use { reader ->
-                val lines = reader.readLines()
-                val table = parseCsvToTable(category, regionName, lines)
+            // Open exact filename from the assets list
+            assetManager.open(fileName).use { stream ->
+                val table = parseCsvStream(stream, category, regionName)
                 if (table != null) tables.add(table)
             }
         }
@@ -116,21 +139,21 @@ fun PostalSortingApp() {
     val currentTabCategory = if (selectedTabIndex == 0) "NSH" else "PH"
     val tabTitles = listOf("NSH", "PH", "Sorting Test")
 
-    // Filter tables for current tab
+    // Filter tables matching current tab
     val currentCategoryTables = remember(loadedTables, currentTabCategory) {
         loadedTables.filter { it.category == currentTabCategory }
     }
 
-    // Default regions list
+    // Default regions shown in tabs
     val defaultRegions = listOf("Dhar Dewas", "Khandwa Khargone", "Air")
     val availableRegions = remember(currentCategoryTables) {
         val extracted = currentCategoryTables.map { it.regionName }.distinct()
-        if (extracted.isEmpty()) defaultRegions else extracted
+        if (extracted.isEmpty()) defaultRegions else (defaultRegions + extracted).distinct()
     }
 
-    var selectedRegion by remember { mutableStateOf(availableRegions.firstOrNull() ?: "Dhar Dewas") }
+    var selectedRegion by remember { mutableStateOf("Dhar Dewas") }
 
-    // Keep active region in sync when changing tabs
+    // Synchronize active region if table selection changes
     LaunchedEffect(availableRegions) {
         if (!availableRegions.contains(selectedRegion) && availableRegions.isNotEmpty()) {
             selectedRegion = availableRegions.first()
@@ -146,7 +169,6 @@ fun PostalSortingApp() {
     var searchQuery by remember { mutableStateOf("") }
     var selectedSearchColumn by remember { mutableStateOf("All Columns") }
 
-    // Reset search column if table headers change
     LaunchedEffect(currentTable) {
         selectedSearchColumn = "All Columns"
     }
@@ -155,7 +177,7 @@ fun PostalSortingApp() {
     var sortColumnIndex by remember { mutableStateOf<Int?>(null) }
     var isSortAscending by remember { mutableStateOf(true) }
 
-    // Upload Sheets Picker
+    // Upload Sheets File Picker
     val filePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetMultipleContents()
     ) { uris: List<Uri> ->
@@ -163,12 +185,10 @@ fun PostalSortingApp() {
         uris.forEach { uri ->
             try {
                 context.contentResolver.openInputStream(uri)?.use { stream ->
-                    BufferedReader(InputStreamReader(stream)).use { reader ->
-                        val lines = reader.readLines()
-                        val fileName = uri.lastPathSegment ?: "Imported"
-                        val table = parseCsvToTable(currentTabCategory, formatTitleCase(fileName.replace(".csv", "")), lines)
-                        if (table != null) newTables.add(table)
-                    }
+                    val fileName = uri.lastPathSegment ?: "Imported"
+                    val region = formatTitleCase(fileName.replace(".csv", "").replace(Regex("(?i)^(nsh|ph)\\s*[-_]?\\s*"), ""))
+                    val table = parseCsvStream(stream, currentTabCategory, region)
+                    if (table != null) newTables.add(table)
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -179,15 +199,15 @@ fun PostalSortingApp() {
         }
     }
 
-    // Theme Colors
-    val postalRed = Color(0xFF8B1515)
-    val saffronOrange = Color(0xFFE87A00)
-    val darkHeading = Color(0xFF1E293B)
-    val subHeadingHindi = Color(0xFF555555)
-    val tabInactiveColor = Color(0xFF64748B)
-    val outerBg = Color(0xFFEAEFF5)
-    val pinBgColor = Color(0xFFEEF2FF)
-    val pinTextColor = Color(0xFF3730A3)
+    // Design Colors
+    val postalRed = Color(0xFF8B1515L)
+    val saffronOrange = Color(0xFFE87A00L)
+    val darkHeading = Color(0xFF1E293BL)
+    val subHeadingHindi = Color(0xFF555555L)
+    val tabInactiveColor = Color(0xFF64748BL)
+    val outerBg = Color(0xFFEAEFF5L)
+    val pinBgColor = Color(0xFFEEF2FFL)
+    val pinTextColor = Color(0xFF3730A3L)
 
     // Filter Rows
     val filteredRows = remember(currentTable, searchQuery, selectedSearchColumn, sortColumnIndex, isSortAscending) {
@@ -272,7 +292,7 @@ fun PostalSortingApp() {
                 )
             }
 
-            Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE2E8F0)))
+            Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE2E8F0L)))
 
             // Main Tabs
             TabRow(
@@ -292,7 +312,7 @@ fun PostalSortingApp() {
                     }
                 },
                 divider = {
-                    Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE2E8F0)))
+                    Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE2E8F0L)))
                 }
             ) {
                 tabTitles.forEachIndexed { index, title ->
@@ -311,7 +331,7 @@ fun PostalSortingApp() {
                 }
             }
 
-            // Region Filter Pills (Red capsule when active, green dot)
+            // Region Filter Pills (Solid red when selected with green indicator dot)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -331,7 +351,7 @@ fun PostalSortingApp() {
                 }
             }
 
-            Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE2E8F0)))
+            Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE2E8F0L)))
 
             // Body Area
             Column(
@@ -339,14 +359,14 @@ fun PostalSortingApp() {
                     .fillMaxSize()
                     .background(Color.White)
             ) {
-                // 1. "Search in table..." Box
+                // 1. "Search in table..." Input Field
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 10.dp),
                     shape = RoundedCornerShape(10.dp),
                     color = Color.White,
-                    border = BorderStroke(1.dp, Color(0xFFE2E8F0))
+                    border = BorderStroke(1.dp, Color(0xFFE2E8F0L))
                 ) {
                     Row(
                         modifier = Modifier
@@ -354,13 +374,13 @@ fun PostalSortingApp() {
                             .padding(horizontal = 14.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("🔍", fontSize = 15.sp, color = Color(0xFF64748B))
+                        Text("🔍", fontSize = 15.sp, color = Color(0xFF64748BL))
                         Spacer(modifier = Modifier.width(8.dp))
                         Box(modifier = Modifier.weight(1f)) {
                             if (searchQuery.isEmpty()) {
                                 Text(
                                     text = "Search in table...",
-                                    color = Color(0xFF94A3B8),
+                                    color = Color(0xFF94A3B8L),
                                     fontSize = 15.sp
                                 )
                             }
@@ -370,7 +390,7 @@ fun PostalSortingApp() {
                                 singleLine = true,
                                 textStyle = androidx.compose.ui.text.TextStyle(
                                     fontSize = 15.sp,
-                                    color = Color(0xFF1E293B),
+                                    color = Color(0xFF1E293BL),
                                     fontWeight = FontWeight.Medium
                                 ),
                                 modifier = Modifier.fillMaxWidth()
@@ -379,7 +399,7 @@ fun PostalSortingApp() {
                     }
                 }
 
-                // 2. SEARCH IN: Filter Chips Row
+                // 2. SEARCH IN: Dynamic Column Filter Chips
                 val searchInOptions = remember(currentTable) {
                     listOf("All Columns") + (currentTable?.headers?.map { formatTitleCase(it) } ?: emptyList())
                 }
@@ -396,7 +416,7 @@ fun PostalSortingApp() {
                         text = "SEARCH IN:",
                         fontSize = 12.sp,
                         fontWeight = FontWeight.ExtraBold,
-                        color = Color(0xFF334155)
+                        color = Color(0xFF334155L)
                     )
 
                     searchInOptions.forEach { opt ->
@@ -407,13 +427,13 @@ fun PostalSortingApp() {
                                 .clickable { selectedSearchColumn = opt },
                             shape = RoundedCornerShape(50),
                             color = if (isSelected) postalRed else Color.White,
-                            border = BorderStroke(1.dp, if (isSelected) postalRed else Color(0xFFE2E8F0))
+                            border = BorderStroke(1.dp, if (isSelected) postalRed else Color(0xFFE2E8F0L))
                         ) {
                             Text(
                                 text = opt,
                                 fontSize = 13.sp,
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                color = if (isSelected) Color.White else Color(0xFF334155),
+                                color = if (isSelected) Color.White else Color(0xFF334155L),
                                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
                             )
                         }
@@ -468,13 +488,13 @@ fun PostalSortingApp() {
                         // Table Header Row
                         Row(
                             modifier = Modifier
-                                .background(Color(0xFFF8FAFC))
+                                .background(Color(0xFFF8FAFCCL))
                                 .padding(vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             currentTable.headers.forEachIndexed { idx, header ->
                                 val isPinCol = header.contains("PIN")
-                                val colWidth = if (isPinCol) 115.dp else 170.dp
+                                val colWidth = if (isPinCol) 120.dp else 180.dp
 
                                 Row(
                                     modifier = Modifier
@@ -495,20 +515,20 @@ fun PostalSortingApp() {
                                         text = header,
                                         fontSize = 13.sp,
                                         fontWeight = FontWeight.ExtraBold,
-                                        color = Color(0xFF1E293B),
+                                        color = Color(0xFF1E293BL),
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     Text(
                                         text = if (sortColumnIndex == idx) (if (isSortAscending) " ▲" else " ▼") else " ⇅",
                                         fontSize = 12.sp,
-                                        color = Color(0xFF94A3B8)
+                                        color = Color(0xFF94A3B8L)
                                     )
                                 }
                             }
                         }
 
-                        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE2E8F0)))
+                        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE2E8F0L)))
 
                         // Table Rows
                         LazyColumn(modifier = Modifier.fillMaxSize()) {
@@ -521,7 +541,7 @@ fun PostalSortingApp() {
                                 ) {
                                     currentTable.headers.forEachIndexed { idx, header ->
                                         val isPinCol = header.contains("PIN")
-                                        val colWidth = if (isPinCol) 115.dp else 170.dp
+                                        val colWidth = if (isPinCol) 120.dp else 180.dp
                                         val cellValue = row.getOrNull(idx) ?: ""
 
                                         Box(
@@ -531,7 +551,7 @@ fun PostalSortingApp() {
                                             contentAlignment = Alignment.CenterStart
                                         ) {
                                             if (isPinCol && cellValue.isNotBlank()) {
-                                                // Lavender/Blue Badge for PINs
+                                                // Lavender / Indigo Badge for PINs
                                                 Surface(
                                                     color = pinBgColor,
                                                     shape = RoundedCornerShape(4.dp)
@@ -548,7 +568,7 @@ fun PostalSortingApp() {
                                                 Text(
                                                     text = cellValue,
                                                     fontSize = 13.sp,
-                                                    color = Color(0xFF1E293B),
+                                                    color = Color(0xFF1E293BL),
                                                     fontWeight = FontWeight.Medium,
                                                     maxLines = 2,
                                                     overflow = TextOverflow.Ellipsis
@@ -557,7 +577,7 @@ fun PostalSortingApp() {
                                         }
                                     }
                                 }
-                                Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFF1F5F9)))
+                                Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFF1F5F9L)))
                             }
                         }
                     }
@@ -574,8 +594,8 @@ fun PillTab(
     hasDot: Boolean,
     onClick: () -> Unit
 ) {
-    val postalRed = Color(0xFF8B1515)
-    val dotGreen = Color(0xFF22C55E)
+    val postalRed = Color(0xFF8B1515L)
+    val dotGreen = Color(0xFF22C55EL)
 
     Surface(
         modifier = Modifier
@@ -583,7 +603,7 @@ fun PillTab(
             .clickable { onClick() },
         shape = RoundedCornerShape(50),
         color = if (isSelected) postalRed else Color.White,
-        border = BorderStroke(1.dp, if (isSelected) postalRed else Color(0xFFE2E8F0))
+        border = BorderStroke(1.dp, if (isSelected) postalRed else Color(0xFFE2E8F0L))
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 18.dp, vertical = 9.dp),
@@ -593,7 +613,7 @@ fun PillTab(
                 text = text,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
-                color = if (isSelected) Color.White else Color(0xFF1E293B)
+                color = if (isSelected) Color.White else Color(0xFF1E293BL)
             )
             if (hasDot) {
                 Spacer(modifier = Modifier.width(6.dp))
