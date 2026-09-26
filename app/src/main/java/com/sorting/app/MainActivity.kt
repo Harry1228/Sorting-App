@@ -2,12 +2,10 @@
 
 package com.sorting.app
 
-import android.net.Uri
+import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -25,6 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -47,46 +46,51 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         actionBar?.hide()
         setContent {
-            PostalSortingApp(onPickCsv = { uri -> parseCsv(uri) })
+            PostalSortingApp()
         }
     }
+}
 
-    private fun parseCsv(uri: Uri): List<PostalRecord> {
-        val list = mutableListOf<PostalRecord>()
-        try {
-            contentResolver.openInputStream(uri)?.use { stream ->
-                BufferedReader(InputStreamReader(stream)).use { reader ->
-                    val lines = reader.readLines()
-                    if (lines.isNotEmpty()) {
-                        for (line in lines.drop(1)) {
-                            val cols = line.split(",").map { it.trim() }
-                            if (cols.size >= 7) {
-                                list.add(
-                                    PostalRecord(
-                                        pin = cols[0],
-                                        officeName = cols[1],
-                                        officeType = cols[2],
-                                        district = cols[3],
-                                        division = cols[4],
-                                        nshRouting = cols[5],
-                                        phRouting = cols[6]
-                                    )
+// Automatically scans and loads all CSV files placed in app/src/main/assets/
+fun loadAllBundledCsvs(context: Context): List<PostalRecord> {
+    val list = mutableListOf<PostalRecord>()
+    val assetManager = context.assets
+    try {
+        val files = assetManager.list("")?.filter { it.endsWith(".csv") } ?: emptyList()
+        for (fileName in files) {
+            assetManager.open(fileName).bufferedReader().use { reader ->
+                val lines = reader.readLines()
+                if (lines.size > 1) {
+                    for (line in lines.drop(1)) {
+                        val cols = line.split(",").map { it.trim() }
+                        if (cols.size >= 7) {
+                            list.add(
+                                PostalRecord(
+                                    pin = cols[0],
+                                    officeName = cols[1],
+                                    officeType = cols[2],
+                                    district = cols[3],
+                                    division = cols[4],
+                                    nshRouting = cols[5],
+                                    phRouting = cols[6]
                                 )
-                            }
+                            )
                         }
                     }
                 }
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
         }
-        return list
+    } catch (e: Exception) {
+        e.printStackTrace()
     }
+    return list
 }
 
 @Composable
-fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
-    var records by remember { mutableStateOf(listOf<PostalRecord>()) }
+fun PostalSortingApp() {
+    val context = LocalContext.current
+    val records = remember { loadAllBundledCsvs(context) }
+
     var selectedTabIndex by remember { mutableIntStateOf(0) }
     val tabTitles = listOf("NSH", "PH", "Sorting Test")
     
@@ -94,14 +98,13 @@ fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
     var selectedDivisionChip by remember { mutableStateOf("ALL") }
 
     val defaultRegions = listOf("Dhar Dewas", "Khandwa Khargone", "Air", "Indore", "Indore MFL")
-    var selectedRegions by remember { mutableStateOf(defaultRegions.toSet()) }
-    var isDropdownOpen by remember { mutableStateOf(false) }
-
-    val filePicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        uri?.let { records = onPickCsv(it) }
+    val allRegions = remember(records) {
+        val fromCsv = records.map { it.division.ifEmpty { it.district } }.filter { it.isNotEmpty() }
+        (defaultRegions + fromCsv).distinct()
     }
+
+    var selectedRegions by remember { mutableStateOf(allRegions.toSet()) }
+    var isDropdownOpen by remember { mutableStateOf(false) }
 
     val postalRed = Color(0xFF8B1515L)
     val saffronOrange = Color(0xFFE87A00L)
@@ -109,11 +112,6 @@ fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
     val subHeadingHindi = Color(0xFF555555L)
     val tabInactiveColor = Color(0xFF64748BL)
     val outerBg = Color(0xFFEAEFF5L)
-
-    val allRegions = remember(records) {
-        val fromCsv = records.map { it.division.ifEmpty { it.district } }.filter { it.isNotEmpty() }
-        (defaultRegions + fromCsv).distinct()
-    }
 
     val filteredRecords = records.filter { record ->
         val recordRegion = record.division.ifEmpty { record.district }
@@ -181,7 +179,7 @@ fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
 
             Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE2E8F0L)))
 
-            // Main Tabs (NSH, PH, Sorting Test)
+            // Main Tabs
             TabRow(
                 selectedTabIndex = selectedTabIndex,
                 containerColor = Color.White,
@@ -252,7 +250,7 @@ fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
 
             Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE2E8F0L)))
 
-            // Search Bar & Controls Area
+            // Search Bar & Filter Controls
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -298,7 +296,7 @@ fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
                     }
                 }
 
-                // Action Bar: "Search Regions All ▼" + "📁 Upload"
+                // Action Bar: "Search Regions All ▼" + Active Record Count
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -309,7 +307,7 @@ fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Dropdown Button
+                        // Dropdown Pill
                         Surface(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(50))
@@ -344,24 +342,22 @@ fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
                                     )
                                 }
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "▼",
-                                    color = postalRed,
-                                    fontSize = 10.sp
-                                )
+                                Text(text = "▼", color = postalRed, fontSize = 10.sp)
                             }
                         }
 
-                        // Upload Button
-                        Button(
-                            onClick = { filePicker.launch("*/*") },
-                            colors = ButtonDefaults.buttonColors(containerColor = postalRed),
-                            shape = RoundedCornerShape(8.dp),
-                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+                        // Status Badge
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = Color(0xFFF1F5F9L)
                         ) {
-                            Text("📁", fontSize = 14.sp)
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Upload", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text(
+                                text = "${filteredRecords.size} Records",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF475569L),
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            )
                         }
                     }
 
@@ -402,12 +398,7 @@ fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
                                             )
                                         )
                                         Spacer(modifier = Modifier.width(4.dp))
-                                        Text(
-                                            text = "Select All",
-                                            fontWeight = FontWeight.ExtraBold,
-                                            fontSize = 14.sp,
-                                            color = darkHeading
-                                        )
+                                        Text("Select All", fontWeight = FontWeight.ExtraBold, fontSize = 14.sp, color = darkHeading)
                                     }
 
                                     Divider(color = Color(0xFFF1F5F9L), thickness = 1.dp)
@@ -419,11 +410,7 @@ fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
                                                 .fillMaxWidth()
                                                 .clip(RoundedCornerShape(8.dp))
                                                 .clickable {
-                                                    selectedRegions = if (isChecked) {
-                                                        selectedRegions - region
-                                                    } else {
-                                                        selectedRegions + region
-                                                    }
+                                                    selectedRegions = if (isChecked) selectedRegions - region else selectedRegions + region
                                                 }
                                                 .padding(vertical = 2.dp, horizontal = 6.dp),
                                             verticalAlignment = Alignment.CenterVertically
@@ -431,11 +418,7 @@ fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
                                             Checkbox(
                                                 checked = isChecked,
                                                 onCheckedChange = { checked ->
-                                                    selectedRegions = if (checked) {
-                                                        selectedRegions + region
-                                                    } else {
-                                                        selectedRegions - region
-                                                    }
+                                                    selectedRegions = if (checked) selectedRegions + region else selectedRegions - region
                                                 },
                                                 colors = CheckboxDefaults.colors(
                                                     checkedColor = postalRed,
@@ -443,12 +426,7 @@ fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
                                                 )
                                             )
                                             Spacer(modifier = Modifier.width(4.dp))
-                                            Text(
-                                                text = region,
-                                                fontWeight = FontWeight.SemiBold,
-                                                fontSize = 14.sp,
-                                                color = darkHeading
-                                            )
+                                            Text(region, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = darkHeading)
                                         }
                                     }
                                 }
@@ -459,7 +437,7 @@ fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
 
                 Spacer(modifier = Modifier.height(6.dp))
 
-                // Full-width Results List (A-Z sidebar removed)
+                // Results List
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxSize()
@@ -561,12 +539,7 @@ fun PillButton(
             modifier = Modifier.padding(horizontal = 18.dp, vertical = 9.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = text,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Bold,
-                color = textColor
-            )
+            Text(text = text, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = textColor)
             if (hasGreenDot && !isSelected) {
                 Spacer(modifier = Modifier.width(7.dp))
                 Box(
@@ -578,3 +551,4 @@ fun PillButton(
         }
     }
 }
+
