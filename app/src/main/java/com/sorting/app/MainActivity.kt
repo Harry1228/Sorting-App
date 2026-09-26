@@ -3,9 +3,12 @@
 package com.sorting.app
 
 import android.content.Context
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -25,20 +28,18 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Popup
 import java.io.BufferedReader
 import java.io.InputStreamReader
 
-data class PostalRecord(
-    val pin: String,
-    val officeName: String,
-    val officeType: String,
-    val district: String,
-    val division: String,
-    val routing: String,
-    val category: String // "NSH" or "PH"
+data class CsvTable(
+    val category: String, // "NSH" or "PH"
+    val regionName: String, // "Dhar Dewas", "Air", etc.
+    val headers: List<String>,
+    val rows: List<List<String>>
 )
 
 class MainActivity : ComponentActivity() {
@@ -51,153 +52,174 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// Converts strings like "DHAR DEWAS" to "Dhar Dewas"
-fun formatRegionTitle(name: String): String {
-    return name.split(" ")
+// Convert "DHAR DEWAS" -> "Dhar Dewas"
+fun formatTitleCase(text: String): String {
+    return text.split(" ")
         .filter { it.isNotBlank() }
-        .joinToString(" ") { word ->
-            word.lowercase().replaceFirstChar { it.uppercase() }
-        }
+        .joinToString(" ") { word -> word.lowercase().replaceFirstChar { it.uppercase() } }
 }
 
-// Loads and parses every CSV in assets/
-fun loadAllAssetsCsv(context: Context): List<PostalRecord> {
-    val recordList = mutableListOf<PostalRecord>()
+// Parse lines into clean table data
+fun parseCsvToTable(category: String, regionName: String, lines: List<String>): CsvTable? {
+    val cleanLines = lines.map { it.trim() }.filter { it.isNotEmpty() }
+    if (cleanLines.isEmpty()) return null
+
+    val regex = ",(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)".toRegex()
+    val headers = cleanLines[0].split(regex).map { it.trim().removeSurrounding("\"").uppercase() }
+    val rows = cleanLines.drop(1).map { line ->
+        line.split(regex).map { it.trim().removeSurrounding("\"") }
+    }
+    return CsvTable(category, regionName, headers, rows)
+}
+
+// Loads all CSVs from assets
+fun loadBundledTables(context: Context): List<CsvTable> {
+    val tables = mutableListOf<CsvTable>()
     val assetManager = context.assets
 
     try {
-        val fileNames = assetManager.list("")?.filter { it.trim().endsWith(".csv", ignoreCase = true) } ?: emptyList()
+        val files = assetManager.list("")?.filter { it.trim().endsWith(".csv", ignoreCase = true) } ?: emptyList()
 
-        for (fileName in fileNames) {
-            // Ignore sample placeholder if other files exist
-            if (fileName.contains("sample_data", ignoreCase = true) && fileNames.size > 1) continue
-
+        for (fileName in files) {
             val cleanName = fileName.trim()
             val lower = cleanName.lowercase()
 
-            // 1. Determine tab category (NSH or PH)
-            val fileCategory = when {
+            val category = when {
                 lower.startsWith("ph") || lower.contains("- ph") -> "PH"
                 else -> "NSH"
             }
 
-            // 2. Extract Region from filename (e.g. "NSH - AIR .csv" -> "Air", "NSH - DHAR DEWAS.csv" -> "Dhar Dewas")
             val baseName = cleanName
                 .replace(Regex("(?i)^(nsh|ph)\\s*[-_]?\\s*"), "")
                 .replace(Regex("(?i)\\.csv$"), "")
                 .trim()
-            val fileRegion = if (baseName.isNotBlank()) formatRegionTitle(baseName) else ""
+            val regionName = if (baseName.isNotBlank()) formatTitleCase(baseName) else "General"
 
             assetManager.open(cleanName).bufferedReader().use { reader ->
-                val lines = reader.readLines().map { it.trim() }.filter { it.isNotEmpty() }
-                if (lines.size > 1) {
-                    val headers = lines[0].split(",").map { it.trim().lowercase().removeSurrounding("\"") }
-
-                    val pinIdx = headers.indexOfFirst { it.contains("pin") }
-                    val officeIdx = headers.indexOfFirst { it.contains("office") || it.contains("name") }
-                    val typeIdx = headers.indexOfFirst { it.contains("type") }
-                    val distIdx = headers.indexOfFirst { it.contains("dist") }
-                    val divIdx = headers.indexOfFirst { it.contains("div") }
-                    val routingIdx = headers.indexOfFirst { 
-                        it.contains("rout") || it.contains("set") || it.contains("hub") || it.contains("nsh") || it.contains("ph") 
-                    }
-
-                    for (line in lines.drop(1)) {
-                        // Split while ignoring commas inside quotes
-                        val cols = line.split(",(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)".toRegex())
-                            .map { it.trim().removeSurrounding("\"") }
-                        if (cols.isEmpty() || cols.all { it.isEmpty() }) continue
-
-                        val pin = if (pinIdx != -1 && pinIdx < cols.size) cols[pinIdx] else (cols.getOrNull(0) ?: "")
-                        val office = if (officeIdx != -1 && officeIdx < cols.size) cols[officeIdx] else (cols.getOrNull(1) ?: "")
-                        val type = if (typeIdx != -1 && typeIdx < cols.size) cols[typeIdx] else "SO/BO"
-                        val district = if (distIdx != -1 && distIdx < cols.size) cols[distIdx] else ""
-                        
-                        // Use column division, or fall back to the filename region
-                        val division = if (divIdx != -1 && divIdx < cols.size && cols[divIdx].isNotBlank()) {
-                            cols[divIdx]
-                        } else if (fileRegion.isNotEmpty()) {
-                            fileRegion
-                        } else {
-                            district
-                        }
-
-                        val routing = if (routingIdx != -1 && routingIdx < cols.size) {
-                            cols[routingIdx]
-                        } else {
-                            cols.lastOrNull() ?: "Main Set"
-                        }
-
-                        recordList.add(
-                            PostalRecord(
-                                pin = pin,
-                                officeName = office,
-                                officeType = type,
-                                district = district.ifEmpty { fileRegion },
-                                division = division,
-                                routing = routing,
-                                category = fileCategory
-                            )
-                        )
-                    }
-                }
+                val lines = reader.readLines()
+                val table = parseCsvToTable(category, regionName, lines)
+                if (table != null) tables.add(table)
             }
         }
     } catch (e: Exception) {
         e.printStackTrace()
     }
-
-    return recordList
+    return tables
 }
 
 @Composable
 fun PostalSortingApp() {
     val context = LocalContext.current
-    val allRecords = remember { loadAllAssetsCsv(context) }
+    var loadedTables by remember { mutableStateOf(loadBundledTables(context)) }
 
     var selectedTabIndex by remember { mutableIntStateOf(0) }
     val currentTabCategory = if (selectedTabIndex == 0) "NSH" else "PH"
     val tabTitles = listOf("NSH", "PH", "Sorting Test")
-    
+
+    // Filter tables for current tab
+    val currentCategoryTables = remember(loadedTables, currentTabCategory) {
+        loadedTables.filter { it.category == currentTabCategory }
+    }
+
+    // Default regions list
+    val defaultRegions = listOf("Dhar Dewas", "Khandwa Khargone", "Air")
+    val availableRegions = remember(currentCategoryTables) {
+        val extracted = currentCategoryTables.map { it.regionName }.distinct()
+        if (extracted.isEmpty()) defaultRegions else extracted
+    }
+
+    var selectedRegion by remember { mutableStateOf(availableRegions.firstOrNull() ?: "Dhar Dewas") }
+
+    // Keep active region in sync when changing tabs
+    LaunchedEffect(availableRegions) {
+        if (!availableRegions.contains(selectedRegion) && availableRegions.isNotEmpty()) {
+            selectedRegion = availableRegions.first()
+        }
+    }
+
+    // Active Table
+    val activeTable = remember(currentCategoryTables, selectedRegion) {
+        currentCategoryTables.firstOrNull { it.regionName.equals(selectedRegion, ignoreCase = true) }
+    }
+
+    // Search and Column Filtering State
     var searchQuery by remember { mutableStateOf("") }
-    var selectedDivisionChip by remember { mutableStateOf("ALL") }
+    var selectedSearchColumn by remember { mutableStateOf("All Columns") }
 
-    val currentTabRecords = remember(allRecords, selectedTabIndex) {
-        if (selectedTabIndex == 2) allRecords else allRecords.filter { it.category == currentTabCategory }
+    // Reset search column if table headers change
+    LaunchedEffect(activeTable) {
+        selectedSearchColumn = "All Columns"
     }
 
-    // Dynamic regions from the current tab's CSV files
-    val allRegions = remember(currentTabRecords) {
-        val extracted = currentTabRecords.map { it.division }.filter { it.isNotBlank() }.distinct()
-        if (extracted.isEmpty()) listOf("Dhar Dewas", "Khandwa Khargone", "Air", "Indore", "Indore MFL") else extracted
+    // Sorting state
+    var sortColumnIndex by remember { mutableStateOf<Int?>(null) }
+    var isSortAscending by remember { mutableStateOf(true) }
+
+    // Upload Sheets Picker
+    val filePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetMultipleContents()
+    ) { uris: List<Uri> ->
+        val newTables = mutableListOf<CsvTable>()
+        uris.forEach { uri ->
+            try {
+                context.contentResolver.openInputStream(uri)?.use { stream ->
+                    BufferedReader(InputStreamReader(stream)).use { reader ->
+                        val lines = reader.readLines()
+                        val fileName = uri.lastPathSegment ?: "Imported"
+                        val table = parseCsvToTable(currentTabCategory, formatTitleCase(fileName.replace(".csv", "")), lines)
+                        if (table != null) newTables.add(table)
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+        if (newTables.isNotEmpty()) {
+            loadedTables = loadedTables + newTables
+        }
     }
 
-    var selectedRegions by remember { mutableStateOf(allRegions.toSet()) }
-    var isDropdownOpen by remember { mutableStateOf(false) }
-
-    LaunchedEffect(allRegions) {
-        selectedRegions = allRegions.toSet()
-        selectedDivisionChip = "ALL"
-    }
-
+    // Theme Colors
     val postalRed = Color(0xFF8B1515L)
     val saffronOrange = Color(0xFFE87A00L)
     val darkHeading = Color(0xFF1E293BL)
     val subHeadingHindi = Color(0xFF555555L)
     val tabInactiveColor = Color(0xFF64748BL)
     val outerBg = Color(0xFFEAEFF5L)
+    val pinBgColor = Color(0xFFEEF2FFL)
+    val pinTextColor = Color(0xFF3730A3L)
 
-    val filteredRecords = currentTabRecords.filter { record ->
-        val matchesPill = (selectedDivisionChip == "ALL") || record.division.equals(selectedDivisionChip, ignoreCase = true)
-        val matchesDropdown = selectedRegions.isEmpty() || selectedRegions.any { record.division.contains(it, ignoreCase = true) }
-        val matchesSearch = searchQuery.isEmpty() || 
-            listOf(record.pin, record.officeName, record.district, record.division, record.routing)
-                .any { it.contains(searchQuery, ignoreCase = true) }
+    // Filter Rows
+    val filteredRows = remember(activeTable, searchQuery, selectedSearchColumn, sortColumnIndex, isSortAscending) {
+        if (activeTable == null) emptyList()
+        else {
+            var list = activeTable.rows
 
-        matchesPill && matchesDropdown && matchesSearch
+            if (searchQuery.isNotBlank()) {
+                list = list.filter { row ->
+                    if (selectedSearchColumn == "All Columns") {
+                        row.any { it.contains(searchQuery, ignoreCase = true) }
+                    } else {
+                        val colIdx = activeTable.headers.indexOfFirst { it.equals(selectedSearchColumn, ignoreCase = true) }
+                        if (colIdx != -1 && colIdx < row.size) {
+                            row[colIdx].contains(searchQuery, ignoreCase = true)
+                        } else {
+                            false
+                        }
+                    }
+                }
+            }
+
+            if (sortColumnIndex != null && sortColumnIndex!! < activeTable.headers.size) {
+                list = list.sortedWith { r1, r2 ->
+                    val v1 = r1.getOrNull(sortColumnIndex!!) ?: ""
+                    val v2 = r2.getOrNull(sortColumnIndex!!) ?: ""
+                    if (isSortAscending) v1.compareTo(v2, ignoreCase = true) else v2.compareTo(v1, ignoreCase = true)
+                }
+            }
+            list
+        }
     }
-
-    val isAllSelected = selectedRegions.size == allRegions.size
 
     Column(
         modifier = Modifier
@@ -288,7 +310,7 @@ fun PostalSortingApp() {
                 }
             }
 
-            // Region Filter Pills
+            // Region Filter Pills (Red capsule when active, green dot)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -297,57 +319,46 @@ fun PostalSortingApp() {
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                PillButton(
-                    text = "Search All",
-                    isSelected = (selectedDivisionChip == "ALL"),
-                    isSearchAll = true,
-                    hasGreenDot = false,
-                    onClick = { selectedDivisionChip = "ALL" }
-                )
-
-                allRegions.forEach { div ->
-                    val showDot = div.contains("Dewas", ignoreCase = true) || 
-                                  div.contains("Khargone", ignoreCase = true) || 
-                                  div.equals("Air", ignoreCase = true)
-
-                    PillButton(
-                        text = div,
-                        isSelected = (selectedDivisionChip == div),
-                        isSearchAll = false,
-                        hasGreenDot = showDot,
-                        onClick = { selectedDivisionChip = div }
+                availableRegions.forEach { region ->
+                    val isSelected = selectedRegion.equals(region, ignoreCase = true)
+                    PillTab(
+                        text = region,
+                        isSelected = isSelected,
+                        hasDot = true,
+                        onClick = { selectedRegion = region }
                     )
                 }
             }
 
             Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE2E8F0L)))
 
-            // Search Bar & Dropdown Controls
+            // Body Area
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color(0xFFFBFBFBL))
+                    .background(Color.White)
             ) {
+                // 1. "Search in table..." Box
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 10.dp),
-                    shape = RoundedCornerShape(50),
+                    shape = RoundedCornerShape(10.dp),
                     color = Color.White,
-                    border = BorderStroke(1.dp, Color(0xFFD1D5DBL))
+                    border = BorderStroke(1.dp, Color(0xFFE2E8F0L))
                 ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("🔍", fontSize = 16.sp)
+                        Text("🔍", fontSize = 15.sp, color = Color(0xFF64748BL))
                         Spacer(modifier = Modifier.width(8.dp))
                         Box(modifier = Modifier.weight(1f)) {
                             if (searchQuery.isEmpty()) {
                                 Text(
-                                    text = "Search across selected regions...",
+                                    text = "Search in table...",
                                     color = Color(0xFF94A3B8L),
                                     fontSize = 15.sp
                                 )
@@ -367,190 +378,185 @@ fun PostalSortingApp() {
                     }
                 }
 
-                // Action Bar: "Search Regions All ▼" + Record Count
-                Box(
+                // 2. SEARCH IN: Filter Chips Row
+                val searchInOptions = remember(activeTable) {
+                    listOf("All Columns") + (activeTable?.headers?.map { formatTitleCase(it) } ?: emptyList())
+                }
+
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+                    Text(
+                        text = "SEARCH IN:",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color(0xFF334155L)
+                    )
+
+                    searchInOptions.forEach { opt ->
+                        val isSelected = selectedSearchColumn.equals(opt, ignoreCase = true)
                         Surface(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(50))
-                                .clickable { isDropdownOpen = !isDropdownOpen },
+                                .clickable { selectedSearchColumn = opt },
                             shape = RoundedCornerShape(50),
-                            color = Color.White,
-                            border = BorderStroke(1.5.dp, postalRed)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text("📁", fontSize = 14.sp)
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "Search Regions",
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = postalRed
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Surface(
-                                    color = Color(0xFFFCE8E8L),
-                                    shape = RoundedCornerShape(50)
-                                ) {
-                                    Text(
-                                        text = if (isAllSelected) "All" else "${selectedRegions.size}",
-                                        color = postalRed,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(text = "▼", color = postalRed, fontSize = 10.sp)
-                            }
-                        }
-
-                        Surface(
-                            shape = RoundedCornerShape(50),
-                            color = Color(0xFFF1F5F9L)
+                            color = if (isSelected) postalRed else Color.White,
+                            border = BorderStroke(1.dp, if (isSelected) postalRed else Color(0xFFE2E8F0L))
                         ) {
                             Text(
-                                text = "${filteredRecords.size} Records",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF475569L),
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                text = opt,
+                                fontSize = 13.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                color = if (isSelected) Color.White else Color(0xFF334155L),
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
                             )
-                        }
-                    }
-
-                    if (isDropdownOpen) {
-                        Popup(
-                            alignment = Alignment.TopStart,
-                            offset = androidx.compose.ui.unit.IntOffset(0, 110),
-                            onDismissRequest = { isDropdownOpen = false }
-                        ) {
-                            Card(
-                                modifier = Modifier
-                                    .width(260.dp)
-                                    .padding(top = 4.dp),
-                                shape = RoundedCornerShape(12.dp),
-                                colors = CardDefaults.cardColors(containerColor = Color.White),
-                                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
-                            ) {
-                                Column(modifier = Modifier.padding(8.dp)) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .clickable {
-                                                selectedRegions = if (isAllSelected) emptySet() else allRegions.toSet()
-                                            }
-                                            .padding(vertical = 4.dp, horizontal = 6.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Checkbox(
-                                            checked = isAllSelected,
-                                            onCheckedChange = { checked ->
-                                                selectedRegions = if (checked) allRegions.toSet() else emptySet()
-                                            },
-                                            colors = CheckboxDefaults.colors(
-                                                checkedColor = postalRed,
-                                                checkmarkColor = Color.White
-                                            )
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Select All", fontWeight = FontWeight.ExtraBold, fontSize = 14.sp, color = darkHeading)
-                                    }
-
-                                    Divider(color = Color(0xFFF1F5F9L), thickness = 1.dp)
-
-                                    allRegions.forEach { region ->
-                                        val isChecked = selectedRegions.contains(region)
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clip(RoundedCornerShape(8.dp))
-                                                .clickable {
-                                                    selectedRegions = if (isChecked) selectedRegions - region else selectedRegions + region
-                                                }
-                                                .padding(vertical = 2.dp, horizontal = 6.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Checkbox(
-                                                checked = isChecked,
-                                                onCheckedChange = { checked ->
-                                                    selectedRegions = if (checked) selectedRegions + region else selectedRegions - region
-                                                },
-                                                colors = CheckboxDefaults.colors(
-                                                    checkedColor = postalRed,
-                                                    checkmarkColor = Color.White
-                                                )
-                                            )
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text(region, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = darkHeading)
-                                        }
-                                    }
-                                }
-                            }
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(6.dp))
-
-                // Records List
-                LazyColumn(
+                // 3. "📁 Upload Sheets" Button
+                Row(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
                 ) {
-                    items(filteredRecords) { record ->
-                        Card(
+                    Button(
+                        onClick = { filePicker.launch(arrayOf("*/*")) },
+                        colors = ButtonDefaults.buttonColors(containerColor = postalRed),
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                    ) {
+                        Text("📁", fontSize = 14.sp)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Upload Sheets",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = Color.White
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                // 4. Interactive Table with Horizontal and Vertical Scrolling
+                if (activeTable == null || activeTable.headers.isEmpty()) {
+                    Box(
+                        modifier = Modifier.fillMaxSize().padding(32.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "No table data found for $selectedRegion.\nPlease ensure the CSV file is placed in assets.",
+                            color = Color.Gray,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                } else {
+                    val horizontalScroll = rememberScrollState()
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .horizontalScroll(horizontalScroll)
+                    ) {
+                        // Table Header Row
+                        Row(
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp),
-                            shape = RoundedCornerShape(10.dp),
-                            colors = CardDefaults.cardColors(containerColor = Color.White),
-                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                                .background(Color(0xFFF8FAFCCL))
+                                .padding(vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(
-                                modifier = Modifier
-                                    .padding(14.dp)
-                                    .fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = "${record.officeName} (${record.pin})",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 15.sp
-                                    )
-                                    Text(
-                                        text = "${record.officeType} • ${record.division}",
-                                        fontSize = 12.sp,
-                                        color = Color.Gray
-                                    )
-                                }
-                                Surface(
-                                    color = Color(0xFFFBEEEDL),
-                                    shape = RoundedCornerShape(6.dp)
+                            activeTable.headers.forEachIndexed { idx, header ->
+                                val isPinCol = header.contains("PIN")
+                                val colWidth = if (isPinCol) 115.dp else 170.dp
+
+                                Row(
+                                    modifier = Modifier
+                                        .width(colWidth)
+                                        .clickable {
+                                            if (sortColumnIndex == idx) {
+                                                isSortAscending = !isSortAscending
+                                            } else {
+                                                sortColumnIndex = idx
+                                                isSortAscending = true
+                                            }
+                                        }
+                                        .padding(horizontal = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
                                     Text(
-                                        text = record.routing,
-                                        color = postalRed,
-                                        fontWeight = FontWeight.Bold,
+                                        text = header,
                                         fontSize = 13.sp,
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = Color(0xFF1E293BL),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = if (sortColumnIndex == idx) (if (isSortAscending) " ▲" else " ▼") else " ⇅",
+                                        fontSize = 12.sp,
+                                        color = Color(0xFF94A3B8L)
                                     )
                                 }
+                            }
+                        }
+
+                        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE2E8F0L)))
+
+                        // Table Rows
+                        LazyColumn(modifier = Modifier.fillMaxSize()) {
+                            items(filteredRows) { row ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    activeTable.headers.forEachIndexed { idx, header ->
+                                        val isPinCol = header.contains("PIN")
+                                        val colWidth = if (isPinCol) 115.dp else 170.dp
+                                        val cellValue = row.getOrNull(idx) ?: ""
+
+                                        Box(
+                                            modifier = Modifier
+                                                .width(colWidth)
+                                                .padding(horizontal = 12.dp),
+                                            contentAlignment = Alignment.CenterStart
+                                        ) {
+                                            if (isPinCol && cellValue.isNotBlank()) {
+                                                // Lavender/Blue Badge for PINs
+                                                Surface(
+                                                    color = pinBgColor,
+                                                    shape = RoundedCornerShape(4.dp)
+                                                ) {
+                                                    Text(
+                                                        text = cellValue,
+                                                        color = pinTextColor,
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontSize = 13.sp,
+                                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                                    )
+                                                }
+                                            } else {
+                                                Text(
+                                                    text = cellValue,
+                                                    fontSize = 13.sp,
+                                                    color = Color(0xFF1E293BL),
+                                                    fontWeight = FontWeight.Medium,
+                                                    maxLines = 2,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                                Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFF1F5F9L)))
                             }
                         }
                     }
@@ -561,57 +567,38 @@ fun PostalSortingApp() {
 }
 
 @Composable
-fun PillButton(
+fun PillTab(
     text: String,
     isSelected: Boolean,
-    isSearchAll: Boolean,
-    hasGreenDot: Boolean,
+    hasDot: Boolean,
     onClick: () -> Unit
 ) {
     val postalRed = Color(0xFF8B1515L)
-    val textDark = Color(0xFF2C3E50L)
-    val borderLightGray = Color(0xFFE2E8F0L)
     val dotGreen = Color(0xFF22C55EL)
-
-    val bgColor = when {
-        isSelected && isSearchAll -> postalRed
-        else -> Color.White
-    }
-
-    val borderColor = when {
-        isSelected && !isSearchAll -> postalRed
-        isSelected && isSearchAll -> postalRed
-        else -> borderLightGray
-    }
-
-    val textColor = when {
-        isSelected && isSearchAll -> Color.White
-        isSelected && !isSearchAll -> postalRed
-        else -> textDark
-    }
 
     Surface(
         modifier = Modifier
             .clip(RoundedCornerShape(50))
             .clickable { onClick() },
         shape = RoundedCornerShape(50),
-        color = bgColor,
-        border = BorderStroke(
-            width = if (isSelected && !isSearchAll) 1.5.dp else 1.dp,
-            color = borderColor
-        ),
-        shadowElevation = if (isSelected && isSearchAll) 2.dp else 0.dp
+        color = if (isSelected) postalRed else Color.White,
+        border = BorderStroke(1.dp, if (isSelected) postalRed else Color(0xFFE2E8F0L))
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 18.dp, vertical = 9.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(text = text, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = textColor)
-            if (hasGreenDot && !isSelected) {
-                Spacer(modifier = Modifier.width(7.dp))
+            Text(
+                text = text,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (isSelected) Color.White else Color(0xFF1E293BL)
+            )
+            if (hasDot) {
+                Spacer(modifier = Modifier.width(6.dp))
                 Box(
                     modifier = Modifier
-                        .size(8.dp)
+                        .size(7.dp)
                         .background(dotGreen, shape = CircleShape)
                 )
             }
