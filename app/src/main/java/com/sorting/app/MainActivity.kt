@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+
 package com.sorting.app
 
 import android.net.Uri
@@ -44,34 +46,37 @@ class MainActivity : ComponentActivity() {
 
     private fun parseCsv(uri: Uri): List<PostalRecord> {
         val list = mutableListOf<PostalRecord>()
-        contentResolver.openInputStream(uri)?.use { stream ->
-            BufferedReader(InputStreamReader(stream)).use { reader ->
-                val lines = reader.readLines()
-                if (lines.isNotEmpty()) {
-                    for (line in lines.drop(1)) {
-                        val cols = line.split(",").map { it.trim() }
-                        if (cols.size >= 7) {
-                            list.add(
-                                PostalRecord(
-                                    pin = cols[0],
-                                    officeName = cols[1],
-                                    officeType = cols[2],
-                                    district = cols[3],
-                                    division = cols[4],
-                                    nshRouting = cols[5],
-                                    phRouting = cols[6]
+        try {
+            contentResolver.openInputStream(uri)?.use { stream ->
+                BufferedReader(InputStreamReader(stream)).use { reader ->
+                    val lines = reader.readLines()
+                    if (lines.isNotEmpty()) {
+                        for (line in lines.drop(1)) {
+                            val cols = line.split(",").map { it.trim() }
+                            if (cols.size >= 7) {
+                                list.add(
+                                    PostalRecord(
+                                        pin = cols[0],
+                                        officeName = cols[1],
+                                        officeType = cols[2],
+                                        district = cols[3],
+                                        division = cols[4],
+                                        nshRouting = cols[5],
+                                        phRouting = cols[6]
+                                    )
                                 )
-                            )
+                            }
                         }
                     }
                 }
             }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
         return list
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
     var records by remember { mutableStateOf(listOf<PostalRecord>()) }
@@ -85,7 +90,7 @@ fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
         uri?.let { records = onPickCsv(it) }
     }
 
-    val primaryRed = Color(0xFF9E1B1B)
+    val primaryRed = Color(0xFF9E1B1BL)
     val divisions = remember(records) {
         listOf("ALL") + records.map { it.division.ifEmpty { it.district } }.distinct().filter { it.isNotEmpty() }
     }
@@ -100,27 +105,58 @@ fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
 
     Scaffold(
         topBar = {
-            Column(modifier = Modifier.fillMaxWidth().background(Color.White).padding(16.dp)) {
-                Text("Department of Posts", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1E293B))
-                Text("भारतीय डाक • ID Division Indore", fontSize = 13.sp, color = primaryRed, fontWeight = FontWeight.SemiBold)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color.White)
+                    .padding(16.dp)
+            ) {
+                Text(
+                    text = "Department of Posts",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF1E293BL)
+                )
+                Text(
+                    text = "भारतीय डाक • ID Division Indore",
+                    fontSize = 13.sp,
+                    color = primaryRed,
+                    fontWeight = FontWeight.SemiBold
+                )
             }
         }
     ) { innerPadding ->
-        Column(modifier = Modifier.fillMaxSize().padding(innerPadding).background(Color(0xFFF8F9FA))) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .background(Color(0xFFF8F9FAL))
+        ) {
             // Tab Selection Row
             TabRow(selectedTabIndex = if (selectedTab == "NSH") 0 else 1) {
-                Tab(selected = selectedTab == "NSH", onClick = { selectedTab = "NSH" }, text = { Text("NSH") })
-                Tab(selected = selectedTab == "PH", onClick = { selectedTab = "PH" }, text = { Text("PH") })
+                Tab(
+                    selected = (selectedTab == "NSH"),
+                    onClick = { selectedTab = "NSH" },
+                    text = { Text("NSH") }
+                )
+                Tab(
+                    selected = (selectedTab == "PH"),
+                    onClick = { selectedTab = "PH" },
+                    text = { Text("PH") }
+                )
             }
 
             // Division Filter Pills
             Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(8.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 divisions.forEach { div ->
                     FilterChip(
-                        selected = selectedDivision == div,
+                        selected = (selectedDivision == div),
                         onClick = { selectedDivision = div },
                         label = { Text(if (div == "ALL") "Search All" else div) }
                     )
@@ -128,7 +164,12 @@ fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
             }
 
             // Search Bar & CSV Upload Button
-            Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
@@ -148,26 +189,42 @@ fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
             }
 
             // Results List
-            LazyColumn(modifier = Modifier.fillMaxSize().padding(12.dp)) {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(12.dp)
+            ) {
                 items(filteredRecords) { record ->
                     val routing = if (selectedTab == "PH") record.phRouting else record.nshRouting
                     Card(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
                         shape = RoundedCornerShape(10.dp),
                         colors = CardDefaults.cardColors(containerColor = Color.White),
-                        elevation = CardDefaults.cardElevation(2.dp)
+                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                     ) {
                         Row(
-                            modifier = Modifier.padding(14.dp).fillMaxWidth(),
+                            modifier = Modifier
+                                .padding(14.dp)
+                                .fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("${record.officeName} (${record.pin})", fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                                Text("${record.officeType} • ${record.district}", fontSize = 12.sp, color = Color.Gray)
+                                Text(
+                                    text = "${record.officeName} (${record.pin})",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 15.sp
+                                )
+                                Text(
+                                    text = "${record.officeType} • ${record.district}",
+                                    fontSize = 12.sp,
+                                    color = Color.Gray
+                                )
                             }
                             Surface(
-                                color = Color(0xFFFBEEED),
+                                color = Color(0xFFFBEEEDL),
                                 shape = RoundedCornerShape(6.dp)
                             ) {
                                 Text(
@@ -185,42 +242,3 @@ fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
         }
     }
 }
-```[span_0](start_span)[span_0](end_span)
-
----
-
-### 3. Add the Cloud Compiler (GitHub Actions)
-
-Create this workflow file so GitHub automatically builds the `.apk` whenever code is saved:
-
-**File 6: `.github/workflows/build.yml`**
-```yaml
-name: Build Android APK
-
-on: [push, workflow_dispatch]
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Source Code
-        uses: actions/checkout@v4
-
-      - name: Set up Java 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-
-      - name: Generate Gradle Wrapper
-        run: gradle wrapper
-
-      - name: Build Debug APK
-        run: ./gradlew assembleDebug --stacktrace
-
-      - name: Upload APK File
-        uses: actions/upload-artifact@v4
-        with:
-          name: postal-sorting-app
-          path: app/build/outputs/apk/debug/*.apk
-          
