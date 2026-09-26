@@ -138,7 +138,7 @@ fun PostalSortingApp() {
     }
 
     // Active Table
-    val activeTable = remember(currentCategoryTables, selectedRegion) {
+    val currentTable = remember(currentCategoryTables, selectedRegion) {
         currentCategoryTables.firstOrNull { it.regionName.equals(selectedRegion, ignoreCase = true) }
     }
 
@@ -147,7 +147,7 @@ fun PostalSortingApp() {
     var selectedSearchColumn by remember { mutableStateOf("All Columns") }
 
     // Reset search column if table headers change
-    LaunchedEffect(activeTable) {
+    LaunchedEffect(currentTable) {
         selectedSearchColumn = "All Columns"
     }
 
@@ -180,27 +180,27 @@ fun PostalSortingApp() {
     }
 
     // Theme Colors
-    val postalRed = Color(0xFF8B1515L)
-    val saffronOrange = Color(0xFFE87A00L)
-    val darkHeading = Color(0xFF1E293BL)
-    val subHeadingHindi = Color(0xFF555555L)
-    val tabInactiveColor = Color(0xFF64748BL)
-    val outerBg = Color(0xFFEAEFF5L)
-    val pinBgColor = Color(0xFFEEF2FFL)
-    val pinTextColor = Color(0xFF3730A3L)
+    val postalRed = Color(0xFF8B1515)
+    val saffronOrange = Color(0xFFE87A00)
+    val darkHeading = Color(0xFF1E293B)
+    val subHeadingHindi = Color(0xFF555555)
+    val tabInactiveColor = Color(0xFF64748B)
+    val outerBg = Color(0xFFEAEFF5)
+    val pinBgColor = Color(0xFFEEF2FF)
+    val pinTextColor = Color(0xFF3730A3)
 
     // Filter Rows
-    val filteredRows = remember(activeTable, searchQuery, selectedSearchColumn, sortColumnIndex, isSortAscending) {
-        if (activeTable == null) emptyList()
+    val filteredRows = remember(currentTable, searchQuery, selectedSearchColumn, sortColumnIndex, isSortAscending) {
+        if (currentTable == null) emptyList()
         else {
-            var list = activeTable.rows
+            var list = currentTable.rows
 
             if (searchQuery.isNotBlank()) {
                 list = list.filter { row ->
                     if (selectedSearchColumn == "All Columns") {
                         row.any { it.contains(searchQuery, ignoreCase = true) }
                     } else {
-                        val colIdx = activeTable.headers.indexOfFirst { it.equals(selectedSearchColumn, ignoreCase = true) }
+                        val colIdx = currentTable.headers.indexOfFirst { it.equals(selectedSearchColumn, ignoreCase = true) }
                         if (colIdx != -1 && colIdx < row.size) {
                             row[colIdx].contains(searchQuery, ignoreCase = true)
                         } else {
@@ -210,10 +210,11 @@ fun PostalSortingApp() {
                 }
             }
 
-            if (sortColumnIndex != null && sortColumnIndex!! < activeTable.headers.size) {
+            val currentSort = sortColumnIndex
+            if (currentSort != null && currentSort < currentTable.headers.size) {
                 list = list.sortedWith { r1, r2 ->
-                    val v1 = r1.getOrNull(sortColumnIndex!!) ?: ""
-                    val v2 = r2.getOrNull(sortColumnIndex!!) ?: ""
+                    val v1 = r1.getOrNull(currentSort) ?: ""
+                    val v2 = r2.getOrNull(currentSort) ?: ""
                     if (isSortAscending) v1.compareTo(v2, ignoreCase = true) else v2.compareTo(v1, ignoreCase = true)
                 }
             }
@@ -271,7 +272,7 @@ fun PostalSortingApp() {
                 )
             }
 
-            Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE2E8F0L)))
+            Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE2E8F0)))
 
             // Main Tabs
             TabRow(
@@ -291,7 +292,7 @@ fun PostalSortingApp() {
                     }
                 },
                 divider = {
-                    Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE2E8F0L)))
+                    Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE2E8F0)))
                 }
             ) {
                 tabTitles.forEachIndexed { index, title ->
@@ -330,7 +331,7 @@ fun PostalSortingApp() {
                 }
             }
 
-            Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE2E8F0L)))
+            Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE2E8F0)))
 
             // Body Area
             Column(
@@ -345,7 +346,7 @@ fun PostalSortingApp() {
                         .padding(horizontal = 16.dp, vertical = 10.dp),
                     shape = RoundedCornerShape(10.dp),
                     color = Color.White,
-                    border = BorderStroke(1.dp, Color(0xFFE2E8F0L))
+                    border = BorderStroke(1.dp, Color(0xFFE2E8F0))
                 ) {
                     Row(
                         modifier = Modifier
@@ -353,13 +354,13 @@ fun PostalSortingApp() {
                             .padding(horizontal = 14.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("🔍", fontSize = 15.sp, color = Color(0xFF64748BL))
+                        Text("🔍", fontSize = 15.sp, color = Color(0xFF64748B))
                         Spacer(modifier = Modifier.width(8.dp))
                         Box(modifier = Modifier.weight(1f)) {
                             if (searchQuery.isEmpty()) {
                                 Text(
                                     text = "Search in table...",
-                                    color = Color(0xFF94A3B8L),
+                                    color = Color(0xFF94A3B8),
                                     fontSize = 15.sp
                                 )
                             }
@@ -369,7 +370,7 @@ fun PostalSortingApp() {
                                 singleLine = true,
                                 textStyle = androidx.compose.ui.text.TextStyle(
                                     fontSize = 15.sp,
-                                    color = Color(0xFF1E293BL),
+                                    color = Color(0xFF1E293B),
                                     fontWeight = FontWeight.Medium
                                 ),
                                 modifier = Modifier.fillMaxWidth()
@@ -379,8 +380,8 @@ fun PostalSortingApp() {
                 }
 
                 // 2. SEARCH IN: Filter Chips Row
-                val searchInOptions = remember(activeTable) {
-                    listOf("All Columns") + (activeTable?.headers?.map { formatTitleCase(it) } ?: emptyList())
+                val searchInOptions = remember(currentTable) {
+                    listOf("All Columns") + (currentTable?.headers?.map { formatTitleCase(it) } ?: emptyList())
                 }
 
                 Row(
@@ -395,7 +396,7 @@ fun PostalSortingApp() {
                         text = "SEARCH IN:",
                         fontSize = 12.sp,
                         fontWeight = FontWeight.ExtraBold,
-                        color = Color(0xFF334155L)
+                        color = Color(0xFF334155)
                     )
 
                     searchInOptions.forEach { opt ->
@@ -406,13 +407,13 @@ fun PostalSortingApp() {
                                 .clickable { selectedSearchColumn = opt },
                             shape = RoundedCornerShape(50),
                             color = if (isSelected) postalRed else Color.White,
-                            border = BorderStroke(1.dp, if (isSelected) postalRed else Color(0xFFE2E8F0L))
+                            border = BorderStroke(1.dp, if (isSelected) postalRed else Color(0xFFE2E8F0))
                         ) {
                             Text(
                                 text = opt,
                                 fontSize = 13.sp,
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                color = if (isSelected) Color.White else Color(0xFF334155L),
+                                color = if (isSelected) Color.White else Color(0xFF334155),
                                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
                             )
                         }
@@ -426,7 +427,7 @@ fun PostalSortingApp() {
                         .padding(horizontal = 16.dp, vertical = 8.dp)
                 ) {
                     Button(
-                        onClick = { filePicker.launch(arrayOf("*/*")) },
+                        onClick = { filePicker.launch("*/*") },
                         colors = ButtonDefaults.buttonColors(containerColor = postalRed),
                         shape = RoundedCornerShape(8.dp),
                         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
@@ -444,8 +445,8 @@ fun PostalSortingApp() {
 
                 Spacer(modifier = Modifier.height(4.dp))
 
-                // 4. Interactive Table with Horizontal and Vertical Scrolling
-                if (activeTable == null || activeTable.headers.isEmpty()) {
+                // 4. Interactive Table
+                if (currentTable == null || currentTable.headers.isEmpty()) {
                     Box(
                         modifier = Modifier.fillMaxSize().padding(32.dp),
                         contentAlignment = Alignment.Center
@@ -467,11 +468,11 @@ fun PostalSortingApp() {
                         // Table Header Row
                         Row(
                             modifier = Modifier
-                                .background(Color(0xFFF8FAFCCL))
+                                .background(Color(0xFFF8FAFC))
                                 .padding(vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            activeTable.headers.forEachIndexed { idx, header ->
+                            currentTable.headers.forEachIndexed { idx, header ->
                                 val isPinCol = header.contains("PIN")
                                 val colWidth = if (isPinCol) 115.dp else 170.dp
 
@@ -494,20 +495,20 @@ fun PostalSortingApp() {
                                         text = header,
                                         fontSize = 13.sp,
                                         fontWeight = FontWeight.ExtraBold,
-                                        color = Color(0xFF1E293BL),
+                                        color = Color(0xFF1E293B),
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     Text(
                                         text = if (sortColumnIndex == idx) (if (isSortAscending) " ▲" else " ▼") else " ⇅",
                                         fontSize = 12.sp,
-                                        color = Color(0xFF94A3B8L)
+                                        color = Color(0xFF94A3B8)
                                     )
                                 }
                             }
                         }
 
-                        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE2E8F0L)))
+                        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE2E8F0)))
 
                         // Table Rows
                         LazyColumn(modifier = Modifier.fillMaxSize()) {
@@ -518,7 +519,7 @@ fun PostalSortingApp() {
                                         .padding(vertical = 8.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    activeTable.headers.forEachIndexed { idx, header ->
+                                    currentTable.headers.forEachIndexed { idx, header ->
                                         val isPinCol = header.contains("PIN")
                                         val colWidth = if (isPinCol) 115.dp else 170.dp
                                         val cellValue = row.getOrNull(idx) ?: ""
@@ -547,7 +548,7 @@ fun PostalSortingApp() {
                                                 Text(
                                                     text = cellValue,
                                                     fontSize = 13.sp,
-                                                    color = Color(0xFF1E293BL),
+                                                    color = Color(0xFF1E293B),
                                                     fontWeight = FontWeight.Medium,
                                                     maxLines = 2,
                                                     overflow = TextOverflow.Ellipsis
@@ -556,7 +557,7 @@ fun PostalSortingApp() {
                                         }
                                     }
                                 }
-                                Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFF1F5F9L)))
+                                Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFF1F5F9)))
                             }
                         }
                     }
@@ -573,8 +574,8 @@ fun PillTab(
     hasDot: Boolean,
     onClick: () -> Unit
 ) {
-    val postalRed = Color(0xFF8B1515L)
-    val dotGreen = Color(0xFF22C55EL)
+    val postalRed = Color(0xFF8B1515)
+    val dotGreen = Color(0xFF22C55E)
 
     Surface(
         modifier = Modifier
@@ -582,7 +583,7 @@ fun PillTab(
             .clickable { onClick() },
         shape = RoundedCornerShape(50),
         color = if (isSelected) postalRed else Color.White,
-        border = BorderStroke(1.dp, if (isSelected) postalRed else Color(0xFFE2E8F0L))
+        border = BorderStroke(1.dp, if (isSelected) postalRed else Color(0xFFE2E8F0))
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 18.dp, vertical = 9.dp),
@@ -592,7 +593,7 @@ fun PillTab(
                 text = text,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
-                color = if (isSelected) Color.White else Color(0xFF1E293BL)
+                color = if (isSelected) Color.White else Color(0xFF1E293B)
             )
             if (hasDot) {
                 Spacer(modifier = Modifier.width(6.dp))
