@@ -3,12 +3,9 @@
 package com.sorting.app
 
 import android.content.Context
-import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -146,7 +143,7 @@ fun loadBundledTables(context: Context): List<CsvTable> {
 @Composable
 fun PostalSortingApp() {
     val context = LocalContext.current
-    var loadedTables by remember { mutableStateOf(loadBundledTables(context)) }
+    val loadedTables = remember { loadBundledTables(context) }
 
     var selectedTabIndex by remember { mutableIntStateOf(0) }
     val currentTabCategory = if (selectedTabIndex == 0) "NSH" else "PH"
@@ -179,29 +176,7 @@ fun PostalSortingApp() {
     val coroutineScope = rememberCoroutineScope()
     val listState = rememberLazyListState()
 
-    // File Picker: Fixed parameter to "*/*"
-    val filePicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetMultipleContents()
-    ) { uris: List<Uri> ->
-        val newTables = mutableListOf<CsvTable>()
-        uris.forEach { uri ->
-            try {
-                context.contentResolver.openInputStream(uri)?.use { stream ->
-                    val fileName = uri.lastPathSegment ?: "Imported"
-                    val region = formatTitleCase(fileName.replace(".csv", "").replace(Regex("(?i)^(nsh|ph)\\s*[-_]?\\s*"), ""))
-                    val table = parseCsvStream(stream, currentTabCategory, region)
-                    if (table != null) newTables.add(table)
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
-        if (newTables.isNotEmpty()) {
-            loadedTables = loadedTables + newTables
-        }
-    }
-
-    // Theme Colors
+    // Colors
     val postalRed = Color(0xFF8B1515L)
     val saffronOrange = Color(0xFFE87A00L)
     val darkHeading = Color(0xFF1E293BL)
@@ -418,7 +393,7 @@ fun PostalSortingApp() {
                     .fillMaxSize()
                     .background(Color(0xFFFBFBFBL))
             ) {
-                // Search Input Field with Clear ('✕') Button[span_3](start_span)[span_3](end_span)[span_4](start_span)[span_4](end_span)
+                // Search Input Field with Clear ('✕') Button
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -469,7 +444,7 @@ fun PostalSortingApp() {
                     }
                 }
 
-                // Sub-Controls: Search Regions Dropdown + Upload Button[span_5](start_span)[span_5](end_span)[span_6](start_span)[span_6](end_span)
+                // Sub-Controls: Search Regions Dropdown Pill Only (Upload button removed)
                 if (selectedRegion == "Search All") {
                     Box(
                         modifier = Modifier
@@ -478,7 +453,7 @@ fun PostalSortingApp() {
                     ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
+                            horizontalArrangement = Arrangement.Start,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Surface(
@@ -517,17 +492,6 @@ fun PostalSortingApp() {
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(text = "▼", color = postalRed, fontSize = 10.sp)
                                 }
-                            }
-
-                            Button(
-                                onClick = { filePicker.launch("*/*") },
-                                colors = ButtonDefaults.buttonColors(containerColor = postalRed),
-                                shape = RoundedCornerShape(8.dp),
-                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
-                            ) {
-                                Text("📁", fontSize = 14.sp)
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Upload", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                             }
                         }
 
@@ -597,7 +561,7 @@ fun PostalSortingApp() {
                         }
                     }
 
-                    // Result count summary row[span_7](start_span)[span_7](end_span)[span_8](start_span)[span_8](end_span)
+                    // Result count summary row
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -622,7 +586,7 @@ fun PostalSortingApp() {
                         }
                     }
 
-                    // Card List with Right Vertical A-Z Scroller[span_9](start_span)[span_9](end_span)[span_10](start_span)[span_10](end_span)
+                    // Card List with Right Vertical A-Z Scroller
                     Box(modifier = Modifier.fillMaxSize()) {
                         LazyColumn(
                             state = listState,
@@ -648,11 +612,9 @@ fun PostalSortingApp() {
                                         )
                                         Spacer(modifier = Modifier.height(10.dp))
 
-                                        // Render tags in clean rows[span_11](start_span)[span_11](end_span)[span_12](start_span)[span_12](end_span)
                                         val shortTags = card.tags.filter { it.displayText.length <= 26 }
                                         val longTags = card.tags.filter { it.displayText.length > 26 }
 
-                                        // Short badges side-by-side[span_13](start_span)[span_13](end_span)[span_14](start_span)[span_14](end_span)
                                         shortTags.chunked(2).forEach { tagPair ->
                                             Row(
                                                 modifier = Modifier.padding(vertical = 3.dp),
@@ -664,7 +626,6 @@ fun PostalSortingApp() {
                                             }
                                         }
 
-                                        // Long badges on full-width lines[span_15](start_span)[span_15](end_span)
                                         longTags.forEach { tag ->
                                             Box(modifier = Modifier.padding(vertical = 3.dp)) {
                                                 BadgeTagView(tag)
@@ -675,7 +636,7 @@ fun PostalSortingApp() {
                             }
                         }
 
-                        // Right A-Z Jump Bar[span_16](start_span)[span_16](end_span)[span_17](start_span)[span_17](end_span)
+                        // Right A-Z Jump Bar
                         Column(
                             modifier = Modifier
                                 .align(Alignment.CenterEnd)
@@ -878,11 +839,11 @@ fun PostalSortingApp() {
 @Composable
 fun BadgeTagView(tag: CardTag) {
     val (bgColor, borderColor, txtColor) = when (tag.colorType) {
-        0 -> Triple(Color(0xFFFEF9C3L), Color(0xFFFDE047L), Color(0xFF854D0EL)) // Yellow PIN[span_18](start_span)[span_18](end_span)[span_19](start_span)[span_19](end_span)
-        1 -> Triple(Color(0xFFFFE4E6L), Color(0xFFFECDD3L), Color(0xFF9F1239L)) // Pink Village/To Pin[span_20](start_span)[span_20](end_span)[span_21](start_span)[span_21](end_span)
-        2 -> Triple(Color(0xFFE0F2FEL), Color(0xFFBAE6FDL), Color(0xFF0369A1L)) // Cyan BO/L1[span_22](start_span)[span_22](end_span)[span_23](start_span)[span_23](end_span)
-        3 -> Triple(Color(0xFFDCFCE7L), Color(0xFFBBF7D0L), Color(0xFF166534L)) // Mint SO/L2[span_24](start_span)[span_24](end_span)[span_25](start_span)[span_25](end_span)
-        else -> Triple(Color(0xFFF3E8FFL), Color(0xFFE9D5FFL), Color(0xFF6B21A8L)) // Purple HO/Circle[span_26](start_span)[span_26](end_span)[span_27](start_span)[span_27](end_span)
+        0 -> Triple(Color(0xFFFEF9C3L), Color(0xFFFDE047L), Color(0xFF854D0EL)) // Yellow PIN
+        1 -> Triple(Color(0xFFFFE4E6L), Color(0xFFFECDD3L), Color(0xFF9F1239L)) // Pink Village/To Pin
+        2 -> Triple(Color(0xFFE0F2FEL), Color(0xFFBAE6FDL), Color(0xFF0369A1L)) // Cyan BO/L1
+        3 -> Triple(Color(0xFFDCFCE7L), Color(0xFFBBF7D0L), Color(0xFF166534L)) // Mint SO/L2
+        else -> Triple(Color(0xFFF3E8FFL), Color(0xFFE9D5FFL), Color(0xFF6B21A8L)) // Purple HO/Circle
     }
 
     Surface(
