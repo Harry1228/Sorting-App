@@ -37,8 +37,8 @@ data class PostalRecord(
     val officeType: String,
     val district: String,
     val division: String,
-    val nshRouting: String,
-    val phRouting: String
+    val routing: String,
+    val category: String // "NSH" or "PH"
 )
 
 class MainActivity : ComponentActivity() {
@@ -51,31 +51,94 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// Automatically scans and loads all CSV files placed in app/src/main/assets/
-fun loadAllBundledCsvs(context: Context): List<PostalRecord> {
-    val list = mutableListOf<PostalRecord>()
+// Converts strings like "DHAR DEWAS" to "Dhar Dewas"
+fun formatRegionTitle(name: String): String {
+    return name.split(" ")
+        .filter { it.isNotBlank() }
+        .joinToString(" ") { word ->
+            word.lowercase().replaceFirstChar { it.uppercase() }
+        }
+}
+
+// Loads and parses every CSV in assets/
+fun loadAllAssetsCsv(context: Context): List<PostalRecord> {
+    val recordList = mutableListOf<PostalRecord>()
     val assetManager = context.assets
+
     try {
-        val files = assetManager.list("")?.filter { it.endsWith(".csv") } ?: emptyList()
-        for (fileName in files) {
-            assetManager.open(fileName).bufferedReader().use { reader ->
-                val lines = reader.readLines()
+        val fileNames = assetManager.list("")?.filter { it.trim().endsWith(".csv", ignoreCase = true) } ?: emptyList()
+
+        for (fileName in fileNames) {
+            // Ignore sample placeholder if other files exist
+            if (fileName.contains("sample_data", ignoreCase = true) && fileNames.size > 1) continue
+
+            val cleanName = fileName.trim()
+            val lower = cleanName.lowercase()
+
+            // 1. Determine tab category (NSH or PH)
+            val fileCategory = when {
+                lower.startsWith("ph") || lower.contains("- ph") -> "PH"
+                else -> "NSH"
+            }
+
+            // 2. Extract Region from filename (e.g. "NSH - AIR .csv" -> "Air", "NSH - DHAR DEWAS.csv" -> "Dhar Dewas")
+            val baseName = cleanName
+                .replace(Regex("(?i)^(nsh|ph)\\s*[-_]?\\s*"), "")
+                .replace(Regex("(?i)\\.csv$"), "")
+                .trim()
+            val fileRegion = if (baseName.isNotBlank()) formatRegionTitle(baseName) else ""
+
+            assetManager.open(cleanName).bufferedReader().use { reader ->
+                val lines = reader.readLines().map { it.trim() }.filter { it.isNotEmpty() }
                 if (lines.size > 1) {
+                    val headers = lines[0].split(",").map { it.trim().lowercase().removeSurrounding("\"") }
+
+                    val pinIdx = headers.indexOfFirst { it.contains("pin") }
+                    val officeIdx = headers.indexOfFirst { it.contains("office") || it.contains("name") }
+                    val typeIdx = headers.indexOfFirst { it.contains("type") }
+                    val distIdx = headers.indexOfFirst { it.contains("dist") }
+                    val divIdx = headers.indexOfFirst { it.contains("div") }
+                    val routingIdx = headers.indexOfFirst { 
+                        it.contains("rout") || it.contains("set") || it.contains("hub") || it.contains("nsh") || it.contains("ph") 
+                    }
+
                     for (line in lines.drop(1)) {
-                        val cols = line.split(",").map { it.trim() }
-                        if (cols.size >= 7) {
-                            list.add(
-                                PostalRecord(
-                                    pin = cols[0],
-                                    officeName = cols[1],
-                                    officeType = cols[2],
-                                    district = cols[3],
-                                    division = cols[4],
-                                    nshRouting = cols[5],
-                                    phRouting = cols[6]
-                                )
-                            )
+                        // Split while ignoring commas inside quotes
+                        val cols = line.split(",(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)".toRegex())
+                            .map { it.trim().removeSurrounding("\"") }
+                        if (cols.isEmpty() || cols.all { it.isEmpty() }) continue
+
+                        val pin = if (pinIdx != -1 && pinIdx < cols.size) cols[pinIdx] else (cols.getOrNull(0) ?: "")
+                        val office = if (officeIdx != -1 && officeIdx < cols.size) cols[officeIdx] else (cols.getOrNull(1) ?: "")
+                        val type = if (typeIdx != -1 && typeIdx < cols.size) cols[typeIdx] else "SO/BO"
+                        val district = if (distIdx != -1 && distIdx < cols.size) cols[distIdx] else ""
+                        
+                        // Use column division, or fall back to the filename region
+                        val division = if (divIdx != -1 && divIdx < cols.size && cols[divIdx].isNotBlank()) {
+                            cols[divIdx]
+                        } else if (fileRegion.isNotEmpty()) {
+                            fileRegion
+                        } else {
+                            district
                         }
+
+                        val routing = if (routingIdx != -1 && routingIdx < cols.size) {
+                            cols[routingIdx]
+                        } else {
+                            cols.lastOrNull() ?: "Main Set"
+                        }
+
+                        recordList.add(
+                            PostalRecord(
+                                pin = pin,
+                                officeName = office,
+                                officeType = type,
+                                district = district.ifEmpty { fileRegion },
+                                division = division,
+                                routing = routing,
+                                category = fileCategory
+                            )
+                        )
                     }
                 }
             }
@@ -83,28 +146,39 @@ fun loadAllBundledCsvs(context: Context): List<PostalRecord> {
     } catch (e: Exception) {
         e.printStackTrace()
     }
-    return list
+
+    return recordList
 }
 
 @Composable
 fun PostalSortingApp() {
     val context = LocalContext.current
-    val records = remember { loadAllBundledCsvs(context) }
+    val allRecords = remember { loadAllAssetsCsv(context) }
 
     var selectedTabIndex by remember { mutableIntStateOf(0) }
+    val currentTabCategory = if (selectedTabIndex == 0) "NSH" else "PH"
     val tabTitles = listOf("NSH", "PH", "Sorting Test")
     
     var searchQuery by remember { mutableStateOf("") }
     var selectedDivisionChip by remember { mutableStateOf("ALL") }
 
-    val defaultRegions = listOf("Dhar Dewas", "Khandwa Khargone", "Air", "Indore", "Indore MFL")
-    val allRegions = remember(records) {
-        val fromCsv = records.map { it.division.ifEmpty { it.district } }.filter { it.isNotEmpty() }
-        (defaultRegions + fromCsv).distinct()
+    val currentTabRecords = remember(allRecords, selectedTabIndex) {
+        if (selectedTabIndex == 2) allRecords else allRecords.filter { it.category == currentTabCategory }
+    }
+
+    // Dynamic regions from the current tab's CSV files
+    val allRegions = remember(currentTabRecords) {
+        val extracted = currentTabRecords.map { it.division }.filter { it.isNotBlank() }.distinct()
+        if (extracted.isEmpty()) listOf("Dhar Dewas", "Khandwa Khargone", "Air", "Indore", "Indore MFL") else extracted
     }
 
     var selectedRegions by remember { mutableStateOf(allRegions.toSet()) }
     var isDropdownOpen by remember { mutableStateOf(false) }
+
+    LaunchedEffect(allRegions) {
+        selectedRegions = allRegions.toSet()
+        selectedDivisionChip = "ALL"
+    }
 
     val postalRed = Color(0xFF8B1515L)
     val saffronOrange = Color(0xFFE87A00L)
@@ -113,12 +187,11 @@ fun PostalSortingApp() {
     val tabInactiveColor = Color(0xFF64748BL)
     val outerBg = Color(0xFFEAEFF5L)
 
-    val filteredRecords = records.filter { record ->
-        val recordRegion = record.division.ifEmpty { record.district }
-        val matchesPill = (selectedDivisionChip == "ALL") || recordRegion.equals(selectedDivisionChip, ignoreCase = true)
-        val matchesDropdown = selectedRegions.isEmpty() || selectedRegions.any { recordRegion.contains(it, ignoreCase = true) }
+    val filteredRecords = currentTabRecords.filter { record ->
+        val matchesPill = (selectedDivisionChip == "ALL") || record.division.equals(selectedDivisionChip, ignoreCase = true)
+        val matchesDropdown = selectedRegions.isEmpty() || selectedRegions.any { record.division.contains(it, ignoreCase = true) }
         val matchesSearch = searchQuery.isEmpty() || 
-            listOf(record.pin, record.officeName, record.district, record.nshRouting, record.phRouting)
+            listOf(record.pin, record.officeName, record.district, record.division, record.routing)
                 .any { it.contains(searchQuery, ignoreCase = true) }
 
         matchesPill && matchesDropdown && matchesSearch
@@ -133,14 +206,13 @@ fun PostalSortingApp() {
             .statusBarsPadding()
             .padding(top = 8.dp)
     ) {
-        // Main Container Card
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
                 .background(Color.White)
         ) {
-            // Orange Accent Top Bar
+            // Orange Header Strip
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -216,7 +288,7 @@ fun PostalSortingApp() {
                 }
             }
 
-            // Horizontal Pill Buttons
+            // Region Filter Pills
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -250,13 +322,12 @@ fun PostalSortingApp() {
 
             Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE2E8F0L)))
 
-            // Search Bar & Filter Controls
+            // Search Bar & Dropdown Controls
             Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(Color(0xFFFBFBFBL))
             ) {
-                // Search Input Field
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -296,7 +367,7 @@ fun PostalSortingApp() {
                     }
                 }
 
-                // Action Bar: "Search Regions All ▼" + Active Record Count
+                // Action Bar: "Search Regions All ▼" + Record Count
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -307,7 +378,6 @@ fun PostalSortingApp() {
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Dropdown Pill
                         Surface(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(50))
@@ -346,7 +416,6 @@ fun PostalSortingApp() {
                             }
                         }
 
-                        // Status Badge
                         Surface(
                             shape = RoundedCornerShape(50),
                             color = Color(0xFFF1F5F9L)
@@ -361,7 +430,6 @@ fun PostalSortingApp() {
                         }
                     }
 
-                    // Dropdown Popup Menu
                     if (isDropdownOpen) {
                         Popup(
                             alignment = Alignment.TopStart,
@@ -437,14 +505,13 @@ fun PostalSortingApp() {
 
                 Spacer(modifier = Modifier.height(6.dp))
 
-                // Results List
+                // Records List
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(horizontal = 16.dp, vertical = 6.dp)
                 ) {
                     items(filteredRecords) { record ->
-                        val routing = if (selectedTabIndex == 1) record.phRouting else record.nshRouting
                         Card(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -467,7 +534,7 @@ fun PostalSortingApp() {
                                         fontSize = 15.sp
                                     )
                                     Text(
-                                        text = "${record.officeType} • ${record.district}",
+                                        text = "${record.officeType} • ${record.division}",
                                         fontSize = 12.sp,
                                         color = Color.Gray
                                     )
@@ -477,7 +544,7 @@ fun PostalSortingApp() {
                                     shape = RoundedCornerShape(6.dp)
                                 ) {
                                     Text(
-                                        text = routing,
+                                        text = record.routing,
                                         color = postalRed,
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 13.sp,
@@ -551,4 +618,3 @@ fun PillButton(
         }
     }
 }
-
