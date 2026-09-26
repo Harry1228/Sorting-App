@@ -16,9 +16,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -80,7 +82,9 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
     var records by remember { mutableStateOf(listOf<PostalRecord>()) }
-    var selectedTab by remember { mutableStateOf("NSH") }
+    var selectedTabIndex by remember { mutableIntStateOf(0) }
+    val tabTitles = listOf("NSH", "PH", "Sorting Test")
+    
     var searchQuery by remember { mutableStateOf("") }
     var selectedDivision by remember { mutableStateOf("ALL") }
 
@@ -91,9 +95,11 @@ fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
     }
 
     val postalRed = Color(0xFF8B1515L)
-    val saffronOrange = Color(0xFFF58220L)
-    val titleDark = Color(0xFF212529L)
-    val subtitleGray = Color(0xFF555555L)
+    val saffronOrange = Color(0xFFE87A00L)
+    val darkHeading = Color(0xFF1E293BL)
+    val subHeadingHindi = Color(0xFF555555L)
+    val tabInactiveColor = Color(0xFF64748BL)
+    val outerBg = Color(0xFFEAEFF5L)
 
     val divisions = remember(records) {
         listOf("ALL") + records.map { it.division.ifEmpty { it.district } }.distinct().filter { it.isNotEmpty() }
@@ -107,168 +113,235 @@ fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
         divMatch && textMatch
     }
 
-    Scaffold(
-        topBar = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(Color.White)
-            ) {
-                // Top saffron accent line
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(5.dp)
-                        .background(saffronOrange)
-                )
-
-                // Header content
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 14.dp)
-                ) {
-                    Text(
-                        text = "Department of Posts",
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = titleDark,
-                        letterSpacing = (-0.5).sp
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = "भारतीय डाक • डाक सेवा जन सेवा",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Normal,
-                        color = subtitleGray
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "ID Division Indore • Sorting Plan",
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = postalRed
-                    )
-                }
-
-                // Bottom subtle border divider
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(1.dp)
-                        .background(Color(0xFFE2E8F0L))
-                )
-            }
-        }
-    ) { innerPadding ->
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(outerBg)
+            .statusBarsPadding()
+            .padding(top = 10.dp)
+    ) {
+        // Main Card Container with top rounded corners
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
-                .background(Color(0xFFF8F9FAL))
+                .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
+                .background(Color.White)
         ) {
-            // Tab Selection Row
-            TabRow(selectedTabIndex = if (selectedTab == "NSH") 0 else 1) {
-                Tab(
-                    selected = (selectedTab == "NSH"),
-                    onClick = { selectedTab = "NSH" },
-                    text = { Text("NSH") }
+            // Orange Accent Top Strip
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(6.dp)
+                    .background(saffronOrange)
+            )
+
+            // Header Section
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 12.dp)
+            ) {
+                Text(
+                    text = "Department of Posts",
+                    fontSize = 25.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = darkHeading,
+                    letterSpacing = (-0.5).sp
                 )
-                Tab(
-                    selected = (selectedTab == "PH"),
-                    onClick = { selectedTab = "PH" },
-                    text = { Text("PH") }
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "भारतीय डाक • डाक सेवा जन सेवा",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = subHeadingHindi
+                )
+                Spacer(modifier = Modifier.height(5.dp))
+                Text(
+                    text = "ID Division Indore • Sorting Plan",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = postalRed
                 )
             }
 
-            // Division Filter Pills
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            // Divider line above tabs
+            Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE2E8F0L)))
+
+            // 3 Navigation Tabs (NSH, PH, Sorting Test)
+            TabRow(
+                selectedTabIndex = selectedTabIndex,
+                containerColor = Color.White,
+                indicator = { tabPositions ->
+                    if (selectedTabIndex < tabPositions.size) {
+                        Box(
+                            Modifier
+                                .tabIndicatorOffset(tabPositions[selectedTabIndex])
+                                .fillMaxWidth()
+                                .wrapContentSize(Alignment.BottomCenter)
+                                .width(64.dp)
+                                .height(3.5.dp)
+                                .background(postalRed, RoundedCornerShape(3.dp))
+                        )
+                    }
+                },
+                divider = {
+                    Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE2E8F0L)))
+                }
             ) {
-                divisions.forEach { div ->
-                    FilterChip(
-                        selected = (selectedDivision == div),
-                        onClick = { selectedDivision = div },
-                        label = { Text(if (div == "ALL") "Search All" else div) }
+                tabTitles.forEachIndexed { index, title ->
+                    Tab(
+                        selected = (selectedTabIndex == index),
+                        onClick = { selectedTabIndex = index },
+                        text = {
+                            Text(
+                                text = title,
+                                fontSize = 15.sp,
+                                fontWeight = if (selectedTabIndex == index) FontWeight.ExtraBold else FontWeight.Bold,
+                                color = if (selectedTabIndex == index) postalRed else tabInactiveColor
+                            )
+                        }
                     )
                 }
             }
 
-            // Search Bar & CSV Upload Button
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    placeholder = { Text("Search PIN or Office...") },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true,
-                    shape = RoundedCornerShape(24.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Button(
-                    onClick = { filePicker.launch("*/*") },
-                    colors = ButtonDefaults.buttonColors(containerColor = postalRed),
-                    shape = RoundedCornerShape(8.dp)
-                ) {
-                    Text("Load CSV")
-                }
-            }
-
-            // Results List
-            LazyColumn(
+            // Body Area (Records List or Sorting Test Mode)
+            Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(12.dp)
+                    .background(Color(0xFFF8F9FAL))
             ) {
-                items(filteredRecords) { record ->
-                    val routing = if (selectedTab == "PH") record.phRouting else record.nshRouting
-                    Card(
+                if (selectedTabIndex == 2) {
+                    // Sorting Test Screen
+                    Box(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp),
-                        shape = RoundedCornerShape(10.dp),
-                        colors = CardDefaults.cardColors(containerColor = Color.White),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                            .fillMaxSize()
+                            .padding(24.dp),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Row(
-                            modifier = Modifier
-                                .padding(14.dp)
-                                .fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                        Card(
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color.White),
+                            elevation = CardDefaults.cardElevation(2.dp),
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "${record.officeName} (${record.pin})",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 15.sp
-                                )
-                                Text(
-                                    text = "${record.officeType} • ${record.district}",
-                                    fontSize = 12.sp,
-                                    color = Color.Gray
-                                )
-                            }
-                            Surface(
-                                color = Color(0xFFFBEEEDL),
-                                shape = RoundedCornerShape(6.dp)
+                            Column(
+                                modifier = Modifier.padding(24.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
                             ) {
                                 Text(
-                                    text = routing,
-                                    color = postalRed,
+                                    "Sorting Test Mode",
+                                    fontSize = 18.sp,
                                     fontWeight = FontWeight.Bold,
-                                    fontSize = 13.sp,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                    color = darkHeading
                                 )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = if (records.isEmpty()) "Load a CSV file first to begin testing." else "Ready to test with ${records.size} loaded PIN records.",
+                                    fontSize = 13.sp,
+                                    color = Color.Gray
+                                )
+                                Spacer(modifier = Modifier.height(16.dp))
+                                Button(
+                                    onClick = { filePicker.launch("*/*") },
+                                    colors = ButtonDefaults.buttonColors(containerColor = postalRed),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text("Load CSV")
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // Division Filter Chips
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        divisions.forEach { div ->
+                            FilterChip(
+                                selected = (selectedDivision == div),
+                                onClick = { selectedDivision = div },
+                                label = { Text(if (div == "ALL") "Search All" else div) }
+                            )
+                        }
+                    }
+
+                    // Search Input & Upload Action
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            placeholder = { Text("Search PIN or Office...") },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true,
+                            shape = RoundedCornerShape(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = { filePicker.launch("*/*") },
+                            colors = ButtonDefaults.buttonColors(containerColor = postalRed),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("Load CSV")
+                        }
+                    }
+
+                    // Records List
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(12.dp)
+                    ) {
+                        items(filteredRecords) { record ->
+                            val routing = if (selectedTabIndex == 1) record.phRouting else record.nshRouting
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                shape = RoundedCornerShape(10.dp),
+                                colors = CardDefaults.cardColors(containerColor = Color.White),
+                                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .padding(14.dp)
+                                        .fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "${record.officeName} (${record.pin})",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 15.sp
+                                        )
+                                        Text(
+                                            text = "${record.officeType} • ${record.district}",
+                                            fontSize = 12.sp,
+                                            color = Color.Gray
+                                        )
+                                    }
+                                    Surface(
+                                        color = Color(0xFFFBEEEDL),
+                                        shape = RoundedCornerShape(6.dp)
+                                    ) {
+                                        Text(
+                                            text = routing,
+                                            color = postalRed,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp,
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
