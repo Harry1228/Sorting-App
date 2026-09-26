@@ -52,7 +52,11 @@ data class SearchCardItem(
     val title: String,
     val region: String,
     val tags: List<CardTag>,
-    val fullSearchString: String
+    val fullSearchString: String,
+    val village: String,
+    val bo: String,
+    val so: String,
+    val ho: String
 )
 
 class MainActivity : ComponentActivity() {
@@ -70,6 +74,48 @@ fun formatTitleCase(text: String): String {
     return text.split(" ")
         .filter { it.isNotBlank() }
         .joinToString(" ") { word -> word.lowercase().replaceFirstChar { it.uppercase() } }
+}
+
+// Hierarchical prefix ranking: Village -> BO -> SO -> HO -> contains
+fun getRowSearchRank(headers: List<String>, row: List<String>, query: String): Int {
+    val q = query.trim().lowercase()
+    if (q.isEmpty()) return 0
+
+    val hUpper = headers.map { it.uppercase() }
+    val villageIdx = hUpper.indexOfFirst { it.contains("VILLAGE") || (it.contains("OFFICE") && !it.contains("L2")) }
+    val boIdx = hUpper.indexOfFirst { it.contains("BO") && !it.contains("SO") && !it.contains("HO") }
+    val soIdx = hUpper.indexOfFirst { it.contains("SO") && !it.contains("BO") }
+    val hoIdx = hUpper.indexOfFirst { it.contains("HO") }
+
+    val villageVal = if (villageIdx != -1 && villageIdx < row.size) row[villageIdx].trim().lowercase() else ""
+    val boVal = if (boIdx != -1 && boIdx < row.size) row[boIdx].trim().lowercase() else ""
+    val soVal = if (soIdx != -1 && soIdx < row.size) row[soIdx].trim().lowercase() else ""
+    val hoVal = if (hoIdx != -1 && hoIdx < row.size) row[hoIdx].trim().lowercase() else ""
+
+    // 1. Village starts with query
+    if (villageVal.startsWith(q)) return 1
+    // 2. BO starts with query
+    if (boVal.startsWith(q)) return 2
+    // 3. SO starts with query
+    if (soVal.startsWith(q)) return 3
+    // 4. HO starts with query
+    if (hoVal.startsWith(q)) return 4
+
+    // 5. Village contains query
+    if (villageVal.contains(q)) return 5
+    // 6. BO contains query
+    if (boVal.contains(q)) return 6
+    // 7. SO contains query
+    if (soVal.contains(q)) return 7
+    // 8. HO contains query
+    if (hoVal.contains(q)) return 8
+
+    // 9. Other columns start with query
+    if (row.any { it.trim().lowercase().startsWith(q) }) return 9
+    // 10. Other columns contain query
+    if (row.any { it.trim().lowercase().contains(q) }) return 10
+
+    return 99
 }
 
 // Parses raw CSV stream handling quotes and commas properly
@@ -194,9 +240,13 @@ fun PostalSortingApp() {
         for (tbl in tablesToInclude) {
             val hUpper = tbl.headers.map { it.uppercase() }
 
+            val villageIdx = hUpper.indexOfFirst { it.contains("VILLAGE") || (it.contains("OFFICE") && !it.contains("L2")) }
+            val boIdx = hUpper.indexOfFirst { it.contains("BO") && !it.contains("SO") && !it.contains("HO") }
+            val soIdx = hUpper.indexOfFirst { it.contains("SO") && !it.contains("BO") }
+            val hoIdx = hUpper.indexOfFirst { it.contains("HO") }
+
             val titleIdx = when {
-                hUpper.indexOfFirst { it.contains("VILLAGE") } != -1 -> hUpper.indexOfFirst { it.contains("VILLAGE") }
-                hUpper.indexOfFirst { it.contains("OFFICE") && !it.contains("L2") } != -1 -> hUpper.indexOfFirst { it.contains("OFFICE") && !it.contains("L2") }
+                villageIdx != -1 -> villageIdx
                 hUpper.indexOfFirst { it.contains("L1") } != -1 -> hUpper.indexOfFirst { it.contains("L1") }
                 else -> tbl.headers.indices.firstOrNull { idx -> !hUpper[idx].contains("PIN") } ?: 0
             }
@@ -210,11 +260,11 @@ fun PostalSortingApp() {
                     if (value.isNotBlank()) {
                         val headerUpper = header.uppercase()
                         val colorType = when {
-                            headerUpper.contains("FROM PIN") || (headerUpper.contains("PIN") && !headerUpper.contains("TO")) -> 0 // Yellow
-                            headerUpper.contains("TO PIN") || headerUpper.contains("VILLAGE") -> 1 // Pink
-                            headerUpper.contains("BO") || headerUpper.contains("L1") -> 2 // Cyan
-                            headerUpper.contains("SO") || headerUpper.contains("L2") -> 3 // Mint Green
-                            headerUpper.contains("HO") || headerUpper.contains("CIRC") || headerUpper.contains("DIST") -> 4 // Purple
+                            headerUpper.contains("FROM PIN") || (headerUpper.contains("PIN") && !headerUpper.contains("TO")) -> 0
+                            headerUpper.contains("TO PIN") || headerUpper.contains("VILLAGE") -> 1
+                            headerUpper.contains("BO") || headerUpper.contains("L1") -> 2
+                            headerUpper.contains("SO") || headerUpper.contains("L2") -> 3
+                            headerUpper.contains("HO") || headerUpper.contains("CIRC") || headerUpper.contains("DIST") -> 4
                             else -> idx % 5
                         }
                         val label = if (headerUpper == "PIN" || headerUpper == "FROM PIN") "PIN $value" else "${formatTitleCase(header)}: $value"
@@ -222,7 +272,12 @@ fun PostalSortingApp() {
                     }
                 }
 
-                list.add(SearchCardItem(title, tbl.regionName, tags, (listOf(title) + row).joinToString(" ")))
+                val vVal = if (villageIdx != -1 && villageIdx < row.size) row[villageIdx] else ""
+                val bVal = if (boIdx != -1 && boIdx < row.size) row[boIdx] else ""
+                val sVal = if (soIdx != -1 && soIdx < row.size) row[soIdx] else ""
+                val hVal = if (hoIdx != -1 && hoIdx < row.size) row[hoIdx] else ""
+
+                list.add(SearchCardItem(title, tbl.regionName, tags, (listOf(title) + row).joinToString(" "), vVal, bVal, sVal, hVal))
             }
         }
         list
@@ -230,7 +285,26 @@ fun PostalSortingApp() {
 
     val filteredCardItems = remember(allCardItems, searchQuery) {
         if (searchQuery.isBlank()) allCardItems
-        else allCardItems.filter { it.fullSearchString.contains(searchQuery, ignoreCase = true) }
+        else {
+            val q = searchQuery.trim().lowercase()
+            allCardItems
+                .filter { it.fullSearchString.contains(q, ignoreCase = true) }
+                .sortedWith(
+                    compareBy<SearchCardItem> { item ->
+                        when {
+                            item.village.lowercase().startsWith(q) -> 1
+                            item.bo.lowercase().startsWith(q) -> 2
+                            item.so.lowercase().startsWith(q) -> 3
+                            item.ho.lowercase().startsWith(q) -> 4
+                            item.village.lowercase().contains(q) -> 5
+                            item.bo.lowercase().contains(q) -> 6
+                            item.so.lowercase().contains(q) -> 7
+                            item.ho.lowercase().contains(q) -> 8
+                            else -> 9
+                        }
+                    }.thenBy { it.title }
+                )
+        }
     }
 
     // Specific Table Data
@@ -238,6 +312,7 @@ fun PostalSortingApp() {
         currentCategoryTables.firstOrNull { it.regionName.equals(selectedRegion, ignoreCase = true) }
     }
 
+    // Filter & Priority Sort Rows
     val filteredTableRows = remember(currentTable, searchQuery, selectedSearchColumn, sortColumnIndex, isSortAscending) {
         if (currentTable == null) emptyList()
         else {
@@ -252,13 +327,19 @@ fun PostalSortingApp() {
                     }
                 }
             }
-            val currentSort = sortColumnIndex
-            if (currentSort != null && currentSort < currentTable.headers.size) {
+
+            if (sortColumnIndex != null && sortColumnIndex!! < currentTable.headers.size) {
                 list = list.sortedWith { r1, r2 ->
-                    val v1 = r1.getOrNull(currentSort) ?: ""
-                    val v2 = r2.getOrNull(currentSort) ?: ""
+                    val v1 = r1.getOrNull(sortColumnIndex!!) ?: ""
+                    val v2 = r2.getOrNull(sortColumnIndex!!) ?: ""
                     if (isSortAscending) v1.compareTo(v2, ignoreCase = true) else v2.compareTo(v1, ignoreCase = true)
                 }
+            } else if (searchQuery.isNotBlank()) {
+                // Apply strict prefix priority: Village -> BO -> SO -> HO
+                list = list.sortedWith(
+                    compareBy<List<String>> { getRowSearchRank(currentTable.headers, it, searchQuery) }
+                        .thenBy { it.getOrNull(0) ?: "" }
+                )
             }
             list
         }
@@ -358,7 +439,7 @@ fun PostalSortingApp() {
                 }
             }
 
-            // Region Filter Pills (Search All first)
+            // Region Filter Pills
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -444,7 +525,7 @@ fun PostalSortingApp() {
                     }
                 }
 
-                // Sub-Controls: Search Regions Dropdown Pill Only (Upload button removed)
+                // Sub-Controls: Search Regions Dropdown Pill Only
                 if (selectedRegion == "Search All") {
                     Box(
                         modifier = Modifier
