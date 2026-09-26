@@ -28,6 +28,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Popup
 import java.io.BufferedReader
 import java.io.InputStreamReader
 
@@ -90,7 +91,11 @@ fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
     val tabTitles = listOf("NSH", "PH", "Sorting Test")
     
     var searchQuery by remember { mutableStateOf("") }
-    var selectedDivision by remember { mutableStateOf("ALL") }
+    var selectedDivisionChip by remember { mutableStateOf("ALL") }
+
+    val defaultRegions = listOf("Dhar Dewas", "Khandwa Khargone", "Air", "Indore", "Indore MFL")
+    var selectedRegions by remember { mutableStateOf(defaultRegions.toSet()) }
+    var isDropdownOpen by remember { mutableStateOf(false) }
 
     val filePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -105,21 +110,23 @@ fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
     val tabInactiveColor = Color(0xFF64748BL)
     val outerBg = Color(0xFFEAEFF5L)
 
-    // Default divisions to display immediately (and merged when CSV is loaded)
-    val defaultDivisions = listOf("Dhar Dewas", "Khandwa Khargone", "Air", "Indore", "Indore MFL")
-    val divisions = remember(records) {
-        val csvDivs = records.map { it.division.ifEmpty { it.district } }.distinct().filter { it.isNotEmpty() }
-        if (csvDivs.isEmpty()) defaultDivisions else csvDivs
+    val allRegions = remember(records) {
+        val fromCsv = records.map { it.division.ifEmpty { it.district } }.filter { it.isNotEmpty() }
+        (defaultRegions + fromCsv).distinct()
     }
 
     val filteredRecords = records.filter { record ->
-        val divMatch = (selectedDivision == "ALL") || 
-            (record.division.equals(selectedDivision, ignoreCase = true) || record.district.equals(selectedDivision, ignoreCase = true))
-        val textMatch = searchQuery.isEmpty() || 
+        val recordRegion = record.division.ifEmpty { record.district }
+        val matchesPill = (selectedDivisionChip == "ALL") || recordRegion.equals(selectedDivisionChip, ignoreCase = true)
+        val matchesDropdown = selectedRegions.isEmpty() || selectedRegions.any { recordRegion.contains(it, ignoreCase = true) }
+        val matchesSearch = searchQuery.isEmpty() || 
             listOf(record.pin, record.officeName, record.district, record.nshRouting, record.phRouting)
                 .any { it.contains(searchQuery, ignoreCase = true) }
-        divMatch && textMatch
+
+        matchesPill && matchesDropdown && matchesSearch
     }
+
+    val isAllSelected = selectedRegions.size == allRegions.size
 
     Column(
         modifier = Modifier
@@ -128,14 +135,14 @@ fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
             .statusBarsPadding()
             .padding(top = 8.dp)
     ) {
-        // Main Card Container with rounded top edges
+        // Main Container Card
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
                 .background(Color.White)
         ) {
-            // Top orange accent band
+            // Orange Accent Top Bar
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -172,10 +179,9 @@ fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
                 )
             }
 
-            // Divider above tabs
             Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE2E8F0L)))
 
-            // Tabs (NSH, PH, Sorting Test)
+            // Main Tabs (NSH, PH, Sorting Test)
             TabRow(
                 selectedTabIndex = selectedTabIndex,
                 containerColor = Color.White,
@@ -212,161 +218,293 @@ fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
                 }
             }
 
-            // Body Area
+            // Horizontal Pill Buttons
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                PillButton(
+                    text = "Search All",
+                    isSelected = (selectedDivisionChip == "ALL"),
+                    isSearchAll = true,
+                    hasGreenDot = false,
+                    onClick = { selectedDivisionChip = "ALL" }
+                )
+
+                allRegions.forEach { div ->
+                    val showDot = div.contains("Dewas", ignoreCase = true) || 
+                                  div.contains("Khargone", ignoreCase = true) || 
+                                  div.equals("Air", ignoreCase = true)
+
+                    PillButton(
+                        text = div,
+                        isSelected = (selectedDivisionChip == div),
+                        isSearchAll = false,
+                        hasGreenDot = showDot,
+                        onClick = { selectedDivisionChip = div }
+                    )
+                }
+            }
+
+            Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE2E8F0L)))
+
+            // Search Bar & Controls Area
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color(0xFFF8F9FAL))
+                    .background(Color(0xFFFBFBFBL))
             ) {
-                if (selectedTabIndex == 2) {
-                    // Sorting Test Mode
-                    Box(
+                // Search Input Field
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    shape = RoundedCornerShape(50),
+                    color = Color.White,
+                    border = BorderStroke(1.dp, Color(0xFFD1D5DBL))
+                ) {
+                    Row(
                         modifier = Modifier
-                            .fillMaxSize()
-                            .padding(24.dp),
-                        contentAlignment = Alignment.Center
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Card(
-                            shape = RoundedCornerShape(12.dp),
-                            colors = CardDefaults.cardColors(containerColor = Color.White),
-                            elevation = CardDefaults.cardElevation(2.dp),
-                            modifier = Modifier.fillMaxWidth()
+                        Text("🔍", fontSize = 16.sp)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Box(modifier = Modifier.weight(1f)) {
+                            if (searchQuery.isEmpty()) {
+                                Text(
+                                    text = "Search across selected regions...",
+                                    color = Color(0xFF94A3B8L),
+                                    fontSize = 15.sp
+                                )
+                            }
+                            androidx.compose.foundation.text.BasicTextField(
+                                value = searchQuery,
+                                onValueChange = { searchQuery = it },
+                                singleLine = true,
+                                textStyle = androidx.compose.ui.text.TextStyle(
+                                    fontSize = 15.sp,
+                                    color = Color(0xFF1E293BL),
+                                    fontWeight = FontWeight.Medium
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
+                }
+
+                // Action Bar: "Search Regions All ▼" + "📁 Upload"
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Dropdown Button
+                        Surface(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(50))
+                                .clickable { isDropdownOpen = !isDropdownOpen },
+                            shape = RoundedCornerShape(50),
+                            color = Color.White,
+                            border = BorderStroke(1.5.dp, postalRed)
                         ) {
-                            Column(
-                                modifier = Modifier.padding(24.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
+                                Text("📁", fontSize = 14.sp)
+                                Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    "Sorting Test Mode",
-                                    fontSize = 18.sp,
+                                    text = "Search Regions",
+                                    fontSize = 14.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = darkHeading
+                                    color = postalRed
                                 )
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(
-                                    text = if (records.isEmpty()) "Load a CSV file first to begin testing." else "Ready to test with ${records.size} loaded PIN records.",
-                                    fontSize = 13.sp,
-                                    color = Color.Gray
-                                )
-                                Spacer(modifier = Modifier.height(16.dp))
-                                Button(
-                                    onClick = { filePicker.launch("*/*") },
-                                    colors = ButtonDefaults.buttonColors(containerColor = postalRed),
-                                    shape = RoundedCornerShape(8.dp)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Surface(
+                                    color = Color(0xFFFCE8E8L),
+                                    shape = RoundedCornerShape(50)
                                 ) {
-                                    Text("Load CSV")
+                                    Text(
+                                        text = if (isAllSelected) "All" else "${selectedRegions.size}",
+                                        color = postalRed,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "▼",
+                                    color = postalRed,
+                                    fontSize = 10.sp
+                                )
+                            }
+                        }
+
+                        // Upload Button
+                        Button(
+                            onClick = { filePicker.launch("*/*") },
+                            colors = ButtonDefaults.buttonColors(containerColor = postalRed),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+                        ) {
+                            Text("📁", fontSize = 14.sp)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Upload", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        }
+                    }
+
+                    // Dropdown Popup Menu
+                    if (isDropdownOpen) {
+                        Popup(
+                            alignment = Alignment.TopStart,
+                            offset = androidx.compose.ui.unit.IntOffset(0, 110),
+                            onDismissRequest = { isDropdownOpen = false }
+                        ) {
+                            Card(
+                                modifier = Modifier
+                                    .width(260.dp)
+                                    .padding(top = 4.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = CardDefaults.cardColors(containerColor = Color.White),
+                                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(8.dp)) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable {
+                                                selectedRegions = if (isAllSelected) emptySet() else allRegions.toSet()
+                                            }
+                                            .padding(vertical = 4.dp, horizontal = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Checkbox(
+                                            checked = isAllSelected,
+                                            onCheckedChange = { checked ->
+                                                selectedRegions = if (checked) allRegions.toSet() else emptySet()
+                                            },
+                                            colors = CheckboxDefaults.colors(
+                                                checkedColor = postalRed,
+                                                checkmarkColor = Color.White
+                                            )
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = "Select All",
+                                            fontWeight = FontWeight.ExtraBold,
+                                            fontSize = 14.sp,
+                                            color = darkHeading
+                                        )
+                                    }
+
+                                    Divider(color = Color(0xFFF1F5F9L), thickness = 1.dp)
+
+                                    allRegions.forEach { region ->
+                                        val isChecked = selectedRegions.contains(region)
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .clickable {
+                                                    selectedRegions = if (isChecked) {
+                                                        selectedRegions - region
+                                                    } else {
+                                                        selectedRegions + region
+                                                    }
+                                                }
+                                                .padding(vertical = 2.dp, horizontal = 6.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Checkbox(
+                                                checked = isChecked,
+                                                onCheckedChange = { checked ->
+                                                    selectedRegions = if (checked) {
+                                                        selectedRegions + region
+                                                    } else {
+                                                        selectedRegions - region
+                                                    }
+                                                },
+                                                colors = CheckboxDefaults.colors(
+                                                    checkedColor = postalRed,
+                                                    checkmarkColor = Color.White
+                                                )
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(
+                                                text = region,
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontSize = 14.sp,
+                                                color = darkHeading
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
-                } else {
-                    // Custom Filter Pills Row
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState())
-                            .padding(horizontal = 14.dp, vertical = 12.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // 1. "Search All" Pill
-                        PillButton(
-                            text = "Search All",
-                            isSelected = (selectedDivision == "ALL"),
-                            isSearchAll = true,
-                            hasGreenDot = false,
-                            onClick = { selectedDivision = "ALL" }
-                        )
+                }
 
-                        // 2. Division Pills
-                        divisions.forEach { div ->
-                            // Show the green dot for route groups like Dhar Dewas, Khandwa Khargone, Air
-                            val showDot = div.contains("Dewas", ignoreCase = true) || 
-                                          div.contains("Khargone", ignoreCase = true) || 
-                                          div.equals("Air", ignoreCase = true)
+                Spacer(modifier = Modifier.height(6.dp))
 
-                            PillButton(
-                                text = div,
-                                isSelected = (selectedDivision == div),
-                                isSearchAll = false,
-                                hasGreenDot = showDot,
-                                onClick = { selectedDivision = div }
-                            )
-                        }
-                    }
-
-                    // Search Input & Upload Action
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 14.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        OutlinedTextField(
-                            value = searchQuery,
-                            onValueChange = { searchQuery = it },
-                            placeholder = { Text("Search PIN or Office...") },
-                            modifier = Modifier.weight(1f),
-                            singleLine = true,
-                            shape = RoundedCornerShape(24.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Button(
-                            onClick = { filePicker.launch("*/*") },
-                            colors = ButtonDefaults.buttonColors(containerColor = postalRed),
-                            shape = RoundedCornerShape(8.dp)
+                // Full-width Results List (A-Z sidebar removed)
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                ) {
+                    items(filteredRecords) { record ->
+                        val routing = if (selectedTabIndex == 1) record.phRouting else record.nshRouting
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color.White),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                         ) {
-                            Text("Load CSV")
-                        }
-                    }
-
-                    // Records List
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(14.dp)
-                    ) {
-                        items(filteredRecords) { record ->
-                            val routing = if (selectedTabIndex == 1) record.phRouting else record.nshRouting
-                            Card(
+                            Row(
                                 modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 4.dp),
-                                shape = RoundedCornerShape(10.dp),
-                                colors = CardDefaults.cardColors(containerColor = Color.White),
-                                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                                    .padding(14.dp)
+                                    .fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Row(
-                                    modifier = Modifier
-                                        .padding(14.dp)
-                                        .fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "${record.officeName} (${record.pin})",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 15.sp
+                                    )
+                                    Text(
+                                        text = "${record.officeType} • ${record.district}",
+                                        fontSize = 12.sp,
+                                        color = Color.Gray
+                                    )
+                                }
+                                Surface(
+                                    color = Color(0xFFFBEEEDL),
+                                    shape = RoundedCornerShape(6.dp)
                                 ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = "${record.officeName} (${record.pin})",
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 15.sp
-                                        )
-                                        Text(
-                                            text = "${record.officeType} • ${record.district}",
-                                            fontSize = 12.sp,
-                                            color = Color.Gray
-                                        )
-                                    }
-                                    Surface(
-                                        color = Color(0xFFFBEEEDL),
-                                        shape = RoundedCornerShape(6.dp)
-                                    ) {
-                                        Text(
-                                            text = routing,
-                                            color = postalRed,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 13.sp,
-                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                                        )
-                                    }
+                                    Text(
+                                        text = routing,
+                                        color = postalRed,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                    )
                                 }
                             }
                         }
@@ -390,7 +528,6 @@ fun PillButton(
     val borderLightGray = Color(0xFFE2E8F0L)
     val dotGreen = Color(0xFF22C55EL)
 
-    // State styling matching the references
     val bgColor = when {
         isSelected && isSearchAll -> postalRed
         else -> Color.White
