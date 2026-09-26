@@ -3,12 +3,9 @@
 package com.sorting.app
 
 import android.content.Context
-import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -95,7 +92,7 @@ fun parseCsvStream(inputStream: InputStream, category: String, regionName: Strin
     }
 }
 
-// Loads all CSV files from the app's assets folder
+// Loads all CSV files from assets
 fun loadBundledTables(context: Context): List<CsvTable> {
     val tables = mutableListOf<CsvTable>()
     val assetManager = context.assets
@@ -111,14 +108,13 @@ fun loadBundledTables(context: Context): List<CsvTable> {
                 else -> "NSH"
             }
 
-            // Extract region name from file name (e.g., "NSH - AIR .csv" -> "Air")
+            // Extract region name from file name (e.g. "NSH - AIR .csv" -> "Air")
             val baseName = fileName.trim()
                 .replace(Regex("(?i)^(nsh|ph)\\s*[-_]?\\s*"), "")
                 .replace(Regex("(?i)\\.csv$"), "")
                 .trim()
             val regionName = if (baseName.isNotBlank()) formatTitleCase(baseName) else "General"
 
-            // Open exact filename from the assets list
             assetManager.open(fileName).use { stream ->
                 val table = parseCsvStream(stream, category, regionName)
                 if (table != null) tables.add(table)
@@ -133,7 +129,7 @@ fun loadBundledTables(context: Context): List<CsvTable> {
 @Composable
 fun PostalSortingApp() {
     val context = LocalContext.current
-    var loadedTables by remember { mutableStateOf(loadBundledTables(context)) }
+    val loadedTables = remember { loadBundledTables(context) }
 
     var selectedTabIndex by remember { mutableIntStateOf(0) }
     val currentTabCategory = if (selectedTabIndex == 0) "NSH" else "PH"
@@ -151,18 +147,45 @@ fun PostalSortingApp() {
         if (extracted.isEmpty()) defaultRegions else (defaultRegions + extracted).distinct()
     }
 
-    var selectedRegion by remember { mutableStateOf("Dhar Dewas") }
+    // First selected pill defaults to "Search All"
+    var selectedRegion by remember { mutableStateOf("Search All") }
 
-    // Synchronize active region if table selection changes
-    LaunchedEffect(availableRegions) {
-        if (!availableRegions.contains(selectedRegion) && availableRegions.isNotEmpty()) {
-            selectedRegion = availableRegions.first()
-        }
-    }
-
-    // Active Table
+    // Active Table: Combines all sheets if "Search All" is selected, else shows the specific sheet
     val currentTable = remember(currentCategoryTables, selectedRegion) {
-        currentCategoryTables.firstOrNull { it.regionName.equals(selectedRegion, ignoreCase = true) }
+        if (selectedRegion == "Search All") {
+            val headers = listOf("REGION", "PIN / RANGE", "OFFICE / VILLAGE", "ROUTING / BO")
+            val rows = mutableListOf<List<String>>()
+
+            for (tbl in currentCategoryTables) {
+                val hUpper = tbl.headers.map { it.uppercase() }
+                val pinIdx = hUpper.indexOfFirst { it.contains("PIN") && !it.contains("FROM") && !it.contains("TO") }
+                val fromPinIdx = hUpper.indexOfFirst { it.contains("FROM") }
+                val toPinIdx = hUpper.indexOfFirst { it.contains("TO") }
+                val officeIdx = hUpper.indexOfFirst { it.contains("OFFICE") || it.contains("VILLAGE") || it.contains("NAME") }
+                val routingIdx = hUpper.indexOfFirst { it.contains("BO") || it.contains("ROUT") || it.contains("SET") || it.contains("HUB") }
+
+                for (row in tbl.rows) {
+                    val pinVal = when {
+                        pinIdx != -1 && pinIdx < row.size -> row[pinIdx]
+                        fromPinIdx != -1 && toPinIdx != -1 && fromPinIdx < row.size && toPinIdx < row.size -> {
+                            val f = row[fromPinIdx]
+                            val t = row[toPinIdx]
+                            if (f == t) f else "$f - $t"
+                        }
+                        fromPinIdx != -1 && fromPinIdx < row.size -> row[fromPinIdx]
+                        else -> row.getOrNull(0) ?: ""
+                    }
+
+                    val officeVal = if (officeIdx != -1 && officeIdx < row.size) row[officeIdx] else (row.getOrNull(1) ?: "")
+                    val routingVal = if (routingIdx != -1 && routingIdx < row.size) row[routingIdx] else (row.getOrNull(2) ?: "")
+
+                    rows.add(listOf(tbl.regionName, pinVal, officeVal, routingVal))
+                }
+            }
+            CsvTable(currentTabCategory, "Search All", headers, rows)
+        } else {
+            currentCategoryTables.firstOrNull { it.regionName.equals(selectedRegion, ignoreCase = true) }
+        }
     }
 
     // Search and Column Filtering State
@@ -176,28 +199,6 @@ fun PostalSortingApp() {
     // Sorting state
     var sortColumnIndex by remember { mutableStateOf<Int?>(null) }
     var isSortAscending by remember { mutableStateOf(true) }
-
-    // Upload Sheets File Picker
-    val filePicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetMultipleContents()
-    ) { uris: List<Uri> ->
-        val newTables = mutableListOf<CsvTable>()
-        uris.forEach { uri ->
-            try {
-                context.contentResolver.openInputStream(uri)?.use { stream ->
-                    val fileName = uri.lastPathSegment ?: "Imported"
-                    val region = formatTitleCase(fileName.replace(".csv", "").replace(Regex("(?i)^(nsh|ph)\\s*[-_]?\\s*"), ""))
-                    val table = parseCsvStream(stream, currentTabCategory, region)
-                    if (table != null) newTables.add(table)
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
-        if (newTables.isNotEmpty()) {
-            loadedTables = loadedTables + newTables
-        }
-    }
 
     // Design Colors
     val postalRed = Color(0xFF8B1515L)
@@ -318,7 +319,10 @@ fun PostalSortingApp() {
                 tabTitles.forEachIndexed { index, title ->
                     Tab(
                         selected = (selectedTabIndex == index),
-                        onClick = { selectedTabIndex = index },
+                        onClick = {
+                            selectedTabIndex = index
+                            selectedRegion = "Search All"
+                        },
                         text = {
                             Text(
                                 text = title,
@@ -331,7 +335,7 @@ fun PostalSortingApp() {
                 }
             }
 
-            // Region Filter Pills (Solid red when selected with green indicator dot)
+            // Region Filter Pills with "Search All" at the beginning
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -340,6 +344,15 @@ fun PostalSortingApp() {
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                // 1. "Search All" Pill (first in row)
+                PillTab(
+                    text = "Search All",
+                    isSelected = (selectedRegion == "Search All"),
+                    hasDot = false,
+                    onClick = { selectedRegion = "Search All" }
+                )
+
+                // 2. Individual Region Pills
                 availableRegions.forEach { region ->
                     val isSelected = selectedRegion.equals(region, ignoreCase = true)
                     PillTab(
@@ -440,32 +453,9 @@ fun PostalSortingApp() {
                     }
                 }
 
-                // 3. "📁 Upload Sheets" Button
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp)
-                ) {
-                    Button(
-                        onClick = { filePicker.launch("*/*") },
-                        colors = ButtonDefaults.buttonColors(containerColor = postalRed),
-                        shape = RoundedCornerShape(8.dp),
-                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
-                    ) {
-                        Text("📁", fontSize = 14.sp)
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "Upload Sheets",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp,
-                            color = Color.White
-                        )
-                    }
-                }
+                Spacer(modifier = Modifier.height(6.dp))
 
-                Spacer(modifier = Modifier.height(4.dp))
-
-                // 4. Interactive Table
+                // 3. Interactive Table
                 if (currentTable == null || currentTable.headers.isEmpty()) {
                     Box(
                         modifier = Modifier.fillMaxSize().padding(32.dp),
@@ -551,7 +541,6 @@ fun PostalSortingApp() {
                                             contentAlignment = Alignment.CenterStart
                                         ) {
                                             if (isPinCol && cellValue.isNotBlank()) {
-                                                // Lavender / Indigo Badge for PINs
                                                 Surface(
                                                     color = pinBgColor,
                                                     shape = RoundedCornerShape(4.dp)
