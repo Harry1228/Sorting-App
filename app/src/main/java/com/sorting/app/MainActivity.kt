@@ -8,12 +8,15 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
@@ -41,6 +44,7 @@ data class PostalRecord(
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        actionBar?.hide()
         setContent {
             PostalSortingApp(onPickCsv = { uri -> parseCsv(uri) })
         }
@@ -101,12 +105,16 @@ fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
     val tabInactiveColor = Color(0xFF64748BL)
     val outerBg = Color(0xFFEAEFF5L)
 
+    // Default divisions to display immediately (and merged when CSV is loaded)
+    val defaultDivisions = listOf("Dhar Dewas", "Khandwa Khargone", "Air", "Indore", "Indore MFL")
     val divisions = remember(records) {
-        listOf("ALL") + records.map { it.division.ifEmpty { it.district } }.distinct().filter { it.isNotEmpty() }
+        val csvDivs = records.map { it.division.ifEmpty { it.district } }.distinct().filter { it.isNotEmpty() }
+        if (csvDivs.isEmpty()) defaultDivisions else csvDivs
     }
 
     val filteredRecords = records.filter { record ->
-        val divMatch = (selectedDivision == "ALL") || (record.division == selectedDivision || record.district == selectedDivision)
+        val divMatch = (selectedDivision == "ALL") || 
+            (record.division.equals(selectedDivision, ignoreCase = true) || record.district.equals(selectedDivision, ignoreCase = true))
         val textMatch = searchQuery.isEmpty() || 
             listOf(record.pin, record.officeName, record.district, record.nshRouting, record.phRouting)
                 .any { it.contains(searchQuery, ignoreCase = true) }
@@ -118,16 +126,16 @@ fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
             .fillMaxSize()
             .background(outerBg)
             .statusBarsPadding()
-            .padding(top = 10.dp)
+            .padding(top = 8.dp)
     ) {
-        // Main Card Container with top rounded corners
+        // Main Card Container with rounded top edges
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
                 .background(Color.White)
         ) {
-            // Orange Accent Top Strip
+            // Top orange accent band
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -164,10 +172,10 @@ fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
                 )
             }
 
-            // Divider line above tabs
+            // Divider above tabs
             Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFE2E8F0L)))
 
-            // 3 Navigation Tabs (NSH, PH, Sorting Test)
+            // Tabs (NSH, PH, Sorting Test)
             TabRow(
                 selectedTabIndex = selectedTabIndex,
                 containerColor = Color.White,
@@ -204,14 +212,14 @@ fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
                 }
             }
 
-            // Body Area (Records List or Sorting Test Mode)
+            // Body Area
             Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(Color(0xFFF8F9FAL))
             ) {
                 if (selectedTabIndex == 2) {
-                    // Sorting Test Screen
+                    // Sorting Test Mode
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -252,19 +260,37 @@ fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
                         }
                     }
                 } else {
-                    // Division Filter Chips
+                    // Custom Filter Pills Row
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .horizontalScroll(rememberScrollState())
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
+                        // 1. "Search All" Pill
+                        PillButton(
+                            text = "Search All",
+                            isSelected = (selectedDivision == "ALL"),
+                            isSearchAll = true,
+                            hasGreenDot = false,
+                            onClick = { selectedDivision = "ALL" }
+                        )
+
+                        // 2. Division Pills
                         divisions.forEach { div ->
-                            FilterChip(
-                                selected = (selectedDivision == div),
-                                onClick = { selectedDivision = div },
-                                label = { Text(if (div == "ALL") "Search All" else div) }
+                            // Show the green dot for route groups like Dhar Dewas, Khandwa Khargone, Air
+                            val showDot = div.contains("Dewas", ignoreCase = true) || 
+                                          div.contains("Khargone", ignoreCase = true) || 
+                                          div.equals("Air", ignoreCase = true)
+
+                            PillButton(
+                                text = div,
+                                isSelected = (selectedDivision == div),
+                                isSearchAll = false,
+                                hasGreenDot = showDot,
+                                onClick = { selectedDivision = div }
                             )
                         }
                     }
@@ -273,7 +299,7 @@ fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 4.dp),
+                            .padding(horizontal = 14.dp, vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         OutlinedTextField(
@@ -298,7 +324,7 @@ fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
                     LazyColumn(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(12.dp)
+                            .padding(14.dp)
                     ) {
                         items(filteredRecords) { record ->
                             val routing = if (selectedTabIndex == 1) record.phRouting else record.nshRouting
@@ -346,6 +372,71 @@ fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+fun PillButton(
+    text: String,
+    isSelected: Boolean,
+    isSearchAll: Boolean,
+    hasGreenDot: Boolean,
+    onClick: () -> Unit
+) {
+    val postalRed = Color(0xFF8B1515L)
+    val textDark = Color(0xFF2C3E50L)
+    val borderLightGray = Color(0xFFE2E8F0L)
+    val dotGreen = Color(0xFF22C55EL)
+
+    // State styling matching the references
+    val bgColor = when {
+        isSelected && isSearchAll -> postalRed
+        else -> Color.White
+    }
+
+    val borderColor = when {
+        isSelected && !isSearchAll -> postalRed
+        isSelected && isSearchAll -> postalRed
+        else -> borderLightGray
+    }
+
+    val textColor = when {
+        isSelected && isSearchAll -> Color.White
+        isSelected && !isSearchAll -> postalRed
+        else -> textDark
+    }
+
+    Surface(
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .clickable { onClick() },
+        shape = RoundedCornerShape(50),
+        color = bgColor,
+        border = BorderStroke(
+            width = if (isSelected && !isSearchAll) 1.5.dp else 1.dp,
+            color = borderColor
+        ),
+        shadowElevation = if (isSelected && isSearchAll) 2.dp else 0.dp
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = text,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                color = textColor
+            )
+            if (hasGreenDot && !isSelected) {
+                Spacer(modifier = Modifier.width(7.dp))
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .background(dotGreen, shape = CircleShape)
+                )
             }
         }
     }
