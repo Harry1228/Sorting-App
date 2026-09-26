@@ -90,7 +90,11 @@ fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
         uri?.let { records = onPickCsv(it) }
     }
 
-    val primaryRed = Color(0xFF9E1B1BL)
+    val postalRed = Color(0xFF8B1515L)
+    val saffronOrange = Color(0xFFF58220L)
+    val titleDark = Color(0xFF212529L)
+    val subtitleGray = Color(0xFF555555L)
+
     val divisions = remember(records) {
         listOf("ALL") + records.map { it.division.ifEmpty { it.district } }.distinct().filter { it.isNotEmpty() }
     }
@@ -109,19 +113,50 @@ fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(Color.White)
-                    .padding(16.dp)
             ) {
-                Text(
-                    text = "Department of Posts",
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFF1E293BL)
+                // Top saffron accent line
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(5.dp)
+                        .background(saffronOrange)
                 )
-                Text(
-                    text = "भारतीय डाक • ID Division Indore",
-                    fontSize = 13.sp,
-                    color = primaryRed,
-                    fontWeight = FontWeight.SemiBold
+
+                // Header content
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 14.dp)
+                ) {
+                    Text(
+                        text = "Department of Posts",
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = titleDark,
+                        letterSpacing = (-0.5).sp
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "भारतीय डाक • डाक सेवा जन सेवा",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Normal,
+                        color = subtitleGray
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "ID Division Indore • Sorting Plan",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = postalRed
+                    )
+                }
+
+                // Bottom subtle border divider
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(Color(0xFFE2E8F0L))
                 )
             }
         }
@@ -181,7 +216,7 @@ fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
                 Spacer(modifier = Modifier.width(8.dp))
                 Button(
                     onClick = { filePicker.launch("*/*") },
-                    colors = ButtonDefaults.buttonColors(containerColor = primaryRed),
+                    colors = ButtonDefaults.buttonColors(containerColor = postalRed),
                     shape = RoundedCornerShape(8.dp)
                 ) {
                     Text("Load CSV")
@@ -229,7 +264,7 @@ fun PostalSortingApp(onPickCsv: (Uri) -> List<PostalRecord>) {
                             ) {
                                 Text(
                                     text = routing,
-                                    color = primaryRed,
+                                    color = postalRed,
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 13.sp,
                                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
